@@ -1,0 +1,11 @@
+Used library            Version
+Adafruit MPU6050        2.2.6
+Adafruit BusIO          1.16.1
+Wire                    3.0.5
+SPI                     3.0.5
+Adafruit Unified Sensor 1.1.14
+TinyGPSPlus             1.0.3
+
+Used platform Version
+esp32:esp32   3.0.5
+
