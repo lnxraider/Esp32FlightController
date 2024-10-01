@@ -28,4 +28,4 @@ Breakdown of the Complete Code:
 Conclusion:
  This code demonstrates how to combine multiple tasks in a FreeRTOS environment on the ESP32, utilizing mutexes to ensure safe communication between tasks. It integrates GPS navigation, flight stabilization using MPU6050, and motor control, all while ensuring that multiple tasks can run concurrently without conflicts.
 
-
+* WARNING...WARNING THIS CODE HAS NOT BEEN TESTED WARNING...WARNING
