@@ -8,6 +8,8 @@ Components:
 
 * IMU Sensor: For gyroscope and accelerometer readings. STEMMA QT MPU-6050 using the Adafruit MPU6050 library, the process involves integrating the Adafruit MPU6050 library and modifying the code to use its functions. The Adafruit library is designed for simplicity and works well with the STEMMA QT I2C connector.
 
+* Altimeter Sensor: For altitude readings. Adafruit BMP280 sensor with I2C communication.
+
 * Brushless Motors (4): For quadcopters.
 
 * Electronic Speed Controllers (ESCs): To control the speed of the motors. The ESCs are controlled using PWM signals.

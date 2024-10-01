@@ -5,6 +5,7 @@
 #include <Wire.h>                      // For I2C communication with MPU6050
 #include <TinyGPSPlus.h>               // GPS parsing library
 #include <HardwareSerial.h>            // UART for GPS communication
+#include <Adafruit_BMP280.h>           // Altimeter (BMP280) library
 #include <freertos/FreeRTOS.h>         // FreeRTOS for task management
 #include <freertos/task.h>             // FreeRTOS task handling
 #include <freertos/semphr.h>           // FreeRTOS semaphore handling
@@ -30,6 +31,7 @@ bfs::SbusTx sbus_tx(&Serial2, SBUS_RX_PIN, SBUS_TX_PIN,  true);
 bfs::SbusData data;
 
 Adafruit_MPU6050 mpu;
+Adafruit_BMP280 bmp;                    // BMP280 sensor for altimeter
 TinyGPSPlus gps;                        // GPS object
 HardwareSerial serialGPS(1);            // GPS on Serial1 (TX = GPIO17)
 
@@ -66,6 +68,10 @@ double homeLongitude = 0.0;
 float batteryVoltage = 0.0;
 float lowBatteryThreshold = 3.5;
 
+// --- Altitude Calculation Variables ---
+float basePressure = 1013.25;  // Sea level pressure in hPa
+float altitude = 0.0;          // Altitude from the altimeter
+
 // --- Constants ---
 #define MOTOR1_PIN 5
 #define MOTOR2_PIN 6
@@ -87,6 +93,19 @@ void setup() {
   mpu.setGyroRange(MPU6050_RANGE_250_DEG);
   mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
   Serial.println("MPU6050 initialized and configured");
+
+  // Initialize BMP280 sensor for altimeter
+  if (!bmp.begin(0x76)) {
+    Serial.println("Could not find a valid BMP280 sensor, check wiring!");
+    while (1);
+  }
+  
+  bmp.setSampling(Adafruit_BMP280::MODE_NORMAL,
+                  Adafruit_BMP280::SAMPLING_X2,
+                  Adafruit_BMP280::SAMPLING_X16,
+                  Adafruit_BMP280::FILTER_X16,
+                  Adafruit_BMP280::STANDBY_MS_500);
+
 
   /* Begin the SBUS communication */
   sbus_rx.Begin();
@@ -120,6 +139,7 @@ void setup() {
 
 void loop() {
   monitorBattery();
+  monitorAltitude();  // Monitor altitude continuously
 }
 
 // ----------------------- FLIGHT CONTROL TASK -----------------------
@@ -230,6 +250,21 @@ void monitorBattery() {
   }
 }
 
+// Monitor and calculate altitude from BMP280
+void monitorAltitude() {
+  float pressure = bmp.readPressure() / 100.0F;  // Pressure in hPa
+  altitude = bmp.readAltitude(basePressure);
+
+  Serial.print("Altitude: ");
+  Serial.print(altitude);
+  Serial.println(" m");
+}
+
+// Return to home on signal loss or low battery
+void returnToHome() {
+  automatedFlight(homeLatitude, homeLongitude, 10.0);  // Return home at 10 meters altitude
+}
+
 // Automated flight to a GPS coordinate
 void automatedFlight(double targetLat, double targetLon, double targetAltitude) {
   while (true) {
@@ -247,6 +282,13 @@ void automatedFlight(double targetLat, double targetLon, double targetAltitude) 
       adjustCourse(bearingToTarget, targetAltitude);
     }
 
+    monitorAltitude();  // Adjust altitude as part of the flight control
+
+    if (abs(altitude - targetAltitude) > 1.0) {
+      Serial.println("Adjusting altitude...");
+      throttleInput = map(targetAltitude, 0, 100, 1000, 2000);
+    }
+
     delay(100);  // Adjust flight every 100 ms
   }
 }
@@ -261,8 +303,8 @@ double calculateBearing(double lat1, double lon1, double lat2, double lon2) {
   return TinyGPSPlus::courseTo(lat1, lon1, lat2, lon2);
 }
 
+// Adjust course based on target bearing and altitude
 void adjustCourse(float targetBearing, float targetAltitude) {
-  // Adjust yaw, pitch, and altitude accordingly
   yawInput = map(targetBearing, 0, 360, 1000, 2000);
   throttleInput = map(targetAltitude, 0, 100, 1000, 2000);
 }
