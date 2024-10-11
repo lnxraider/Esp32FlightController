@@ -36,12 +36,12 @@
    * Altitude Measurement: The BMP280 sensor is used to measure the altitude and integrate it into the control logic or navigation features.
 
 10. GPS Navigation Support
-   * TinyGPS++ Library: The GPS data (latitude, longitude, etc.) is processed using TinyGPS++ within the Communication class.
-   * Future Expansion for GPS Navigation: The code is designed to easily expand for more complex GPS-based flight modes like Return-to-Home, Waypoint Navigation, etc.
+    * TinyGPS++ Library: The GPS data (latitude, longitude, etc.) is processed using TinyGPS++ within the Communication class.
+    * Future Expansion for GPS Navigation: The code is designed to easily expand for more complex GPS-based flight modes like Return-to-Home, Waypoint Navigation, etc.
 
 11. Scalability and Extensibility
-   * Additional Sensors and Components: The architecture supports the addition of new sensors (e.g., LiDAR, barometers) with minimal modification to existing code.
-   * Flight Mode Expansion: New flight modes or control systems (e.g., altitude hold, position hold) can be added by extending the FlightControl class or introducing new control systems.
+    * Additional Sensors and Components: The architecture supports the addition of new sensors (e.g., LiDAR, barometers) with minimal modification to existing code.
+    * Flight Mode Expansion: New flight modes or control systems (e.g., altitude hold, position hold) can be added by extending the FlightControl class or introducing new control systems.
 
 12. Hardware Abstraction and Flexibility
     * Pin and Serial Configuration: All hardware connections (e.g., motor control, SBUS, GPS) are abstracted and can be easily reconfigured without deep changes to the codebase.
