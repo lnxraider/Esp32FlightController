@@ -73,6 +73,9 @@ void FlightControl::update() {
         setFlightMode(FlightMode::RETURN_TO_HOME);
     }
 
+    // PID Tuning
+    updateDynamicPIDTunings();
+
     switch (currentMode) {
         case FlightMode::MANUAL:
             mapReceiverInput();
@@ -255,6 +258,13 @@ void FlightControl::navigateToWaypoint(const Waypoint& waypoint) {
         // Implement obstacle avoidance algorithm
         avoidObstacle();
     } else {
+        /* PID calculations from ClaudeAI v3.5
+	float roll = pidRoll.calculate(desiredRoll, currentRoll);
+        float pitch = pidPitch.calculate(desiredPitch, currentPitch);
+        float yaw = pidYaw.calculate(desiredYaw, currentYaw);
+        float throttle = pidAltitude.calculate(desiredAltitude, currentAltitude);
+        motors.controlMotors(throttle, roll, pitch, yaw);
+        */
         // Apply the calculated control inputs
         motors.controlMotors(desiredThrottle, desiredRoll, desiredPitch, desiredYaw);
     }
@@ -286,3 +296,37 @@ void FlightControl::avoidObstacle() {
     // This could involve changing altitude, adjusting course, or hovering in place
     return;
 }
+
+// PID Tuning
+void FlightControl::updateFlightConditions() {
+    currentConditions.batteryVoltage = batteryMonitor.getVoltage();
+    currentConditions.payloadWeight = estimatePayloadWeight();
+    currentConditions.altitude = communication.getAltitude();
+    currentConditions.windSpeed = estimateWindSpeed();
+    currentConditions.flightSpeed = estimateFlightSpeed();
+}
+
+void FlightControl::updateDynamicPIDTunings() {
+    updateFlightConditions();
+    
+    pidRoll.updateDynamicTunings(currentConditions);
+    pidPitch.updateDynamicTunings(currentConditions);
+    pidYaw.updateDynamicTunings(currentConditions);
+    pidAltitude.updateDynamicTunings(currentConditions);
+}
+
+float FlightControl::estimatePayloadWeight() {
+    // Implement payload weight estimation
+    // This could be based on the difference between expected and actual throttle needed to hover
+}
+
+float FlightControl::estimateWindSpeed() {
+    // Implement wind speed estimation
+    // This could be based on the difference between commanded and actual movement
+}
+
+float FlightControl::estimateFlightSpeed() {
+    // Implement flight speed estimation
+    // This could be based on GPS data or inertial measurements
+}
+

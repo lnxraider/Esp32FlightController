@@ -55,6 +55,14 @@ FlightControl(Communication& comm, MotorControl& motorControl);
     virtual bool detectObstacle();
     virtual void avoidObstacle();
 
+    // PID Tuning
+    void updateDynamicPIDTunings();
+
+protected:
+    virtual float estimatePayloadWeight();
+    virtual float estimateWindSpeed();
+    virtual float estimateFlightSpeed();
+
 private:
     static constexpr float MIN_SBUS_VALUE = 172.0f;
     static constexpr float MAX_SBUS_VALUE = 1811.0f;
@@ -117,6 +125,11 @@ private:
     void navigateToWaypoint(const Waypoint& waypoint);
     bool isWaypointReached(const Waypoint& waypoint);
     void updateAutonomousNavigation();
+
+    // PID Tuning
+    FlightConditions currentConditions;
+    void updateFlightConditions();
+
 };
 
 #endif  // FLIGHTCONTROL_H
