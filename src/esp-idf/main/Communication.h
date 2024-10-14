@@ -26,7 +26,7 @@ struct IMUData {
 
 class Communication {
 public:
-    Communication();
+    Communication(HardwareSerial& gpsSerial, HardwareSerial& sbusSerial);
     bool initialize();
     void updateSensors();
     void processGPSData();
@@ -35,16 +35,34 @@ public:
     IMUData getIMUData();
     float getAltitude();
 
+    float getGPSLatitude();
+    float getGPSLongitude();
+    bool isSignalLost();  // SBUS failsafe
+    void updateIMU();
+    bool checkMotorHealth();
+
 private:
     Adafruit_BMP280 bmp280;
     Adafruit_MPU6050 mpu;
-    TinyGPSPlus gps;
-    HardwareSerial serialGPS;
-    bfs::SbusRx sbus;
-    bfs::SbusData sbusData;
 
     IMUData imuData;
     float altitude;
+
+    // GPS-related members
+    TinyGPSPlus gps;
+    HardwareSerial& serialGPS;
+    float currentLatitude;
+    float currentLongitude;
+
+    // SBUS-related members
+    bfs::SbusRx sbus;
+    bfs::SbusData sbusData;
+
+    // complementary filter for IMU data
+    const float ALPHA = 0.98;
+    float complementaryRoll = 0;
+    float complementaryPitch = 0;
+
 };
 
 #endif  // COMMUNICATION_H

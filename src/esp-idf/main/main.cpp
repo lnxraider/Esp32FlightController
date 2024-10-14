@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include "Drone.h"
+#include <esp_task_wdt.h>
 
 // Create global instances of classes
 Drone drone;
@@ -37,9 +38,15 @@ void setup() {
         &communicationTaskHandle,// Task handle
         1                       // Core
     );
+
+    // Implement a watchdog timer
+    esp_task_wdt_init(WDT_TIMEOUT, true); //enable panic so ESP32 restarts
+    esp_task_wdt_add(NULL); //add current thread to WDT watch
 }
 
 void loop() {
+    esp_task_wdt_reset();
+
     // Empty loop; all tasks are handled by FreeRTOS
 }
 

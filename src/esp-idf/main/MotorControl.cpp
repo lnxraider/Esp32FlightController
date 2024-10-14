@@ -10,6 +10,9 @@ void MotorControl::initialize() {
 }
 
 void MotorControl::controlMotors(float throttle, float roll, float pitch, float yaw) {
+
+    if (!armed) return;
+
     // Motor mixing for quadcopter in X configuration
     float motorSpeeds[4];
     motorSpeeds[0] = throttle + pitch + roll - yaw;  // Front Right
@@ -30,3 +33,44 @@ void MotorControl::writeMotorPWM(int motorIndex, float value) {
     ledcWrite(motorIndex, pwmValue);
 }
 
+void MotorControl::arm() {
+    if (!armed) {
+        // Perform arming sequence
+        // e.g., set all motors to minimum throttle for a few seconds
+        for (int i = 0; i < 4; i++) {
+            writeMotorPWM(i, 0);
+        }
+        delay(3000); // Wait for 3 seconds
+        armed = true;
+    }
+}
+
+void MotorControl::disarm() {
+    armed = false;
+    for (int i = 0; i < 4; i++) {
+        writeMotorPWM(i, 0);
+    }
+}
+
+void updateArming() {
+    if (armStartTime == 0) {
+        armStartTime = millis();
+        for (int i = 0; i < 4; i++) {
+            writeMotorPWM(i, 0);
+        }
+    }
+
+    if (millis() - armStartTime >= ARM_DURATION) {
+        armed = true;
+        armStartTime = 0;
+    }
+}
+
+bool checkMotorHealth() {
+    for (int i = 0; i < 4; i++) {
+        if (getMotorRPM(i) < MIN_HEALTHY_RPM) {
+            return false;
+        }
+    }
+    return true;
+}

@@ -11,6 +11,7 @@ void PID::setTunings(float kp, float ki, float kd) {
     this->kd = kd;
 }
 
+/*
 float PID::calculate(float setpoint, float input) {
     float error = setpoint - input;
     integral += error;
@@ -19,4 +20,20 @@ float PID::calculate(float setpoint, float input) {
 
     return kp * error + ki * integral + kd * derivative;
 }
+*/
 
+float PID::calculate(float setpoint, float input) {
+    float error = setpoint - input;
+    integral += ki * error;
+
+    // Anti-windup
+    integral = constrain(integral, -MAX_INTEGRAL, MAX_INTEGRAL);
+
+    float derivative = -kd * (input - previousInput) / dt;  // Derivative on measurement
+    previousInput = input;
+
+    float output = kp * error + integral + derivative;
+
+    // Output clamping
+    return constrain(output, -MAX_OUTPUT, MAX_OUTPUT);
+}

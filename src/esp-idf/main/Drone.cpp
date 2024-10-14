@@ -8,24 +8,29 @@ Drone::Drone()
 
 bool Drone::initialize() {
     if (!communication.initialize()) {
-        Serial.println("Communication initialization failed!");
+        logError(DroneError::COMMUNICATION_FAILURE);
         return false;
     }
-    motorControl.initialize();
+    if (!motorControl.initialize()) {
+        logError(DroneError::MOTOR_FAILURE);
+        return false;
+    }
     batteryMonitor.initialize();
     return true;
 }
 
 void Drone::updateFlightControl() {
-    flightControl.mapReceiverInput();
-    flightControl.tunePID();
+    flightControl.update();
     motorControl.controlMotors(
         flightControl.getThrottle(),
         flightControl.getRoll(),
         flightControl.getPitch(),
         flightControl.getYaw()
     );
-    batteryMonitor.monitorBattery();
+    if (!batteryMonitor.monitorBattery()) {
+        setFlightMode(FlightControl::RETURN_TO_HOME);
+        logError(DroneError::BATTERY_CRITICAL);
+    };
 }
 
 void Drone::updateCommunication() {
@@ -33,3 +38,17 @@ void Drone::updateCommunication() {
     communication.processGPSData();
 }
 
+void Drone::logError(DroneError error) {
+    lastError = error;
+    // Log to SD card or transmit error code
+    Serial.print("Error: ");
+    Serial.println(static_cast<int>(error));
+}
+
+void Drone::writeLogError(const char* message) {
+    File logFile = SD.open("/error_log.txt", FILE_APPEND);
+    if (logFile) {
+        logFile.println(message);
+        logFile.close();
+    }
+}

@@ -1,9 +1,9 @@
 #include "Communication.h"
 #include <Wire.h>
 
-Communication::Communication()
-    : sbus(&Serial2, &sbusData),  // Use Serial2 for SBUS
-      serialGPS(1)                // Use Serial1 for GPS
+// Constructor to initialize GPS and SBUS with the given serial objects
+Communication::Communication(HardwareSerial& gpsSerial, HardwareSerial& sbusSerial)
+    : serialGPS(gpsSerial), sbus(&sbusSerial, SBUS_RX_PIN, SBUS_TX_PIN,  true)
 {
     // Empty constructor
 }
@@ -50,18 +50,19 @@ void Communication::updateSensors() {
     altitude = bmp280.readAltitude(1013.25);  // Adjust sea level pressure as needed
 
     // Update GPS data
-    while (serialGPS.available() > 0) {
-        gps.encode(serialGPS.read());
-    }
+    //while (serialGPS.available() > 0) {
+    //    gps.encode(serialGPS.read());
+    //}
+    updateGPS();
 }
 
 void Communication::processGPSData() {
     if (gps.location.isUpdated()) {
         // Process GPS location data
-        float latitude = gps.location.lat();
-        float longitude = gps.location.lng();
-        Serial.print("Latitude: "); Serial.println(latitude, 6);
-        Serial.print("Longitude: "); Serial.println(longitude, 6);
+        currentLatitude  = gps.location.lat();
+        currentLongitude = gps.location.lng();
+        Serial.print("Latitude: "); Serial.println(currentLatitude, 6);
+        Serial.print("Longitude: "); Serial.println(currentLongitude, 6);
     }
 }
 
@@ -77,3 +78,47 @@ float Communication::getAltitude() {
     return altitude;
 }
 
+// Fetch the current GPS latitude
+float Communication::getGPSLatitude() {
+    return currentLatitude;
+}
+
+// Fetch the current GPS longitude
+float Communication::getGPSLongitude() {
+    return currentLongitude;
+}
+
+// Check if the SBUS signal has been lost (failsafe trigger)
+bool Communication::isSignalLost() {
+    bool _result = false;
+    if (sbusData.failsafe || sbusData.lost_frame) {
+        _result = true;
+    }
+    return _result;
+}
+
+void Communication::updateIMU() {
+    sensors_event_t a, g, temp;
+    mpu.getEvent(&a, &g, &temp);
+    
+    float accelRoll = atan2(a.acceleration.y, a.acceleration.z) * RAD_TO_DEG;
+    float accelPitch = atan2(-a.acceleration.x, sqrt(a.acceleration.y * a.acceleration.y + a.acceleration.z * a.acceleration.z)) * RAD_TO_DEG;
+    
+    complementaryRoll = ALPHA * (complementaryRoll + g.gyro.x * dt) + (1 - ALPHA) * accelRoll;
+    complementaryPitch = ALPHA * (complementaryPitch + g.gyro.y * dt) + (1 - ALPHA) * accelPitch;
+    
+    imuData.roll = complementaryRoll;
+    imuData.pitch = complementaryPitch;
+    imuData.yaw += g.gyro.z * dt;
+}
+
+void Communication::updateGPS() {
+    while (serialGPS.available() > 0) {
+        if (gps.encode(serialGPS.read())) {
+            if (gps.location.isUpdated()) {
+                currentLatitude = gps.location.lat();
+                currentLongitude = gps.location.lng();
+            }
+        }
+    }
+}
