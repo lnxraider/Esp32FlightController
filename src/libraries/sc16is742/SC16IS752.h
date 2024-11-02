@@ -41,6 +41,14 @@
     #define DEFAULT_I2C_FREQ 100000  // 100kHz for Arduino
 #endif
 
+   //=====================================================================
+    // ADC Definitions
+    //=====================================================================
+
+    static const uint8_t MIN_ADC_BITS = 8;
+    static const uint8_t MAX_ADC_BITS = 12;
+    static const uint8_t DEFAULT_ADC_BITS = 10;
+
 class SC16IS752 {
 public:
     //=====================================================================
@@ -94,6 +102,40 @@ public:
     static const uint8_t REG_DLL = 0x00;       // Divisor Latch LSB (LCR[7] = 1)
     static const uint8_t REG_DLH = 0x01;       // Divisor Latch MSB (LCR[7] = 1)
     static const uint8_t REG_EFR = 0x02;       // Enhanced Feature Register
+
+    // GPIO and Extended Functionality Registers
+    static const uint8_t REG_IOD = 0x0A;       // GPIO Data Register
+    static const uint8_t REG_IOSTATE = 0x0B;   // GPIO State Register
+    static const uint8_t REG_IODIR = 0x0A;     // GPIO Direction Register
+    static const uint8_t REG_IOINTENA = 0x0C;  // GPIO Interrupt Enable Register
+    static const uint8_t REG_IOCTRL = 0x0E;    // GPIO Control Register
+    static const uint8_t REG_EFCR = 0x0F;      // Extra Features Control Register
+    
+    // ADC Registers
+    static const uint8_t REG_ADCCON = 0x14;    // ADC Control Register
+    static const uint8_t REG_ADCDAT = 0x15;    // ADC Data Register
+    static const uint8_t REG_ADCSEL = 0x16;    // ADC Channel Select Register
+    
+    // PWM Registers
+    static const uint8_t REG_PWMCFG = 0x12;    // PWM Configuration Register
+    static const uint8_t REG_PWMDUTY = 0x13;   // PWM Duty Cycle Register
+
+    // GPIO Pins
+    static const uint8_t GPIO_0 = 0;
+    static const uint8_t GPIO_1 = 1;
+    static const uint8_t GPIO_2 = 2;
+    static const uint8_t GPIO_3 = 3;
+    static const uint8_t GPIO_4 = 4;
+    static const uint8_t GPIO_5 = 5;
+    static const uint8_t GPIO_6 = 6;
+    static const uint8_t GPIO_7 = 7;
+
+    // PWM Configuration
+    static const uint8_t MAX_PWM_RESOLUTION = 16;
+    static const uint8_t MIN_PWM_RESOLUTION = 8;
+    static const uint32_t MAX_PWM_FREQUENCY = 20000; // 20 kHz
+    static const uint32_t MIN_PWM_FREQUENCY = 10;    // 10 Hz
+    static const uint32_t XTAL_FREQ = 1843200;       // 1.8432 MHz crystal
 
     // Register bit definitions
     static const uint8_t LSR_DATA_READY = 0x01;        // Data ready
@@ -152,52 +194,54 @@ public:
     };
     #endif
 
-    struct TransferTimings {
-        // Core timing constants based on test results
-        static const unsigned long SUSTAINED_RATE_BPS_SMALL = 982;  // Achieved 981.60 bps
-        static const unsigned long SUSTAINED_RATE_BPS_LARGE = 719;  // Achieved 719.07 bps
+    struct PWMConfig {
+        uint32_t frequency;     // PWM frequency in Hz
+        uint16_t resolution;    // PWM resolution in bits (8-16)
+        uint16_t clockDivider; // Clock divider value
         
-        // Optimized timing parameters
-        static const uint32_t SMALL_PACKET_THRESHOLD = 32;    // Threshold for timing selection
-        static const uint32_t FIFO_STABILIZE_TIME = 100;      // Microseconds to wait for FIFO
-        static const uint32_t FIFO_WAIT_MS = 27;              // FIFO fill time
+        PWMConfig(uint32_t freq = 1000, uint16_t res = 8) : 
+            frequency(freq), 
+            resolution(res),
+            clockDivider(0) {}
+    };
 
-        // Adaptive timing parameters
-        uint32_t INTER_BYTE_DELAY_US;     // Dynamic delay between bytes
-        uint32_t INTER_CHUNK_DELAY_US;    // Dynamic delay between chunks
-        uint32_t STATUS_CHECK_DELAY_US;   // Dynamic status check interval
+    struct TransferTimings {
+        // Core timing constants
+        static const unsigned long SUSTAINED_RATE_BPS_SMALL = 982;
+        static const unsigned long SUSTAINED_RATE_BPS_LARGE = 719;
+        
+        // Configuration
+        static const uint32_t SMALL_PACKET_THRESHOLD = 32;
+        static const uint32_t FIFO_STABILIZE_TIME = 100;
+        static const uint32_t FIFO_WAIT_MS = 27;
+
+        // Dynamic parameters
+        uint32_t INTER_BYTE_DELAY_US;
+        uint32_t INTER_CHUNK_DELAY_US;
+        uint32_t STATUS_CHECK_DELAY_US;
 
         TransferTimings() :
-            INTER_BYTE_DELAY_US(45),      // Optimized from test results
-            INTER_CHUNK_DELAY_US(180),    // Optimized from test results
-            STATUS_CHECK_DELAY_US(90)     // Optimized from test results
-        {}
+            INTER_BYTE_DELAY_US(45),
+            INTER_CHUNK_DELAY_US(180),
+            STATUS_CHECK_DELAY_US(90) {}
 
-        void adjustForPacketSize(size_t packetSize) {
-            if (packetSize <= SMALL_PACKET_THRESHOLD) {
-                INTER_BYTE_DELAY_US = 45;
-                INTER_CHUNK_DELAY_US = 180;
-            } else {
-                INTER_BYTE_DELAY_US = 55;
-                INTER_CHUNK_DELAY_US = 220;
-            }
-        }
+        void adjustForPacketSize(size_t packetSize);
     };
 
     struct TransferStates {
-        static const uint8_t CHUNK_SIZE = 8;               // Optimal chunk size
-        static const uint8_t BUFFER_SIZE = 16;             // Full transfer size
-        static const uint8_t LSR_READY = 0x60;            // Initial state (THRE + TEMT)
-        static const uint8_t LSR_BUSY = 0x21;             // Mid-transfer state
-        static const uint8_t LSR_DATA = 0x61;             // Data ready state
-        static const uint8_t FIFO_FULL = 16;              // RX FIFO full size
+        static const uint8_t CHUNK_SIZE = 8;
+        static const uint8_t BUFFER_SIZE = 16;
+        static const uint8_t LSR_READY = 0x60;
+        static const uint8_t LSR_BUSY = 0x21;
+        static const uint8_t LSR_DATA = 0x61;
+        static const uint8_t FIFO_FULL = 16;
     };
 
     struct TransferResult {
-        uint16_t bytesTransferred;   // Number of bytes transferred
-        int8_t error;               // Error code (0 = success)
-        uint32_t timeMs;            // Operation duration in milliseconds
-        bool complete;              // True if transfer completed successfully
+        uint16_t bytesTransferred;
+        int8_t error;
+        uint32_t timeMs;
+        bool complete;
 
         TransferResult() : 
             bytesTransferred(0),
@@ -207,11 +251,11 @@ public:
     };
 
     struct UARTStatus {
-        uint8_t lsr;       // Line Status Register
-        uint8_t msr;       // Modem Status Register
-        uint8_t txlvl;     // TX FIFO Level
-        uint8_t rxlvl;     // RX FIFO Level
-        int8_t error;      // Error code
+        uint8_t lsr;     // Line Status Register
+        uint8_t msr;     // Modem Status Register
+        uint8_t txlvl;   // TX FIFO Level
+        uint8_t rxlvl;   // RX FIFO Level
+        int8_t error;    // Error code
 
         UARTStatus() :
             lsr(0),
@@ -230,41 +274,10 @@ public:
         uint32_t maxSuccessiveTransfers;
         uint32_t currentSuccessiveTransfers;
 
-        TransferStats() {
-            reset();
-        }
-
-        void reset() {
-            totalTransfers = 0;
-            successfulTransfers = 0;
-            totalBytes = 0;
-            totalTimeMs = 0;
-            averageRate = 0;
-            maxSuccessiveTransfers = 0;
-            currentSuccessiveTransfers = 0;
-        }
-
-        void updateRate() {
-            if (totalTimeMs > 0) {
-                averageRate = (float)(totalBytes * 1000) / totalTimeMs;
-            }
-        }
-
-        void recordTransfer(bool success, size_t bytes, uint32_t timeMs) {
-            totalTransfers++;
-            if (success) {
-                successfulTransfers++;
-                totalBytes += bytes;
-                totalTimeMs += timeMs;
-                currentSuccessiveTransfers++;
-                if (currentSuccessiveTransfers > maxSuccessiveTransfers) {
-                    maxSuccessiveTransfers = currentSuccessiveTransfers;
-                }
-            } else {
-                currentSuccessiveTransfers = 0;
-            }
-            updateRate();
-        }
+        TransferStats();
+        void reset();
+        void updateRate();
+        void recordTransfer(bool success, size_t bytes, uint32_t timeMs);
     };
 
     //=====================================================================
@@ -296,18 +309,35 @@ public:
     size_t writeBytes(uint8_t channel, const uint8_t* data, size_t length);
     size_t readBytes(uint8_t channel, uint8_t* buffer, size_t length);
 
-    // Configuration
+    // Configuration methods
     int setBaudRate(uint8_t channel, uint32_t baud, uint32_t xtalFreq = 1843200);
     int setLineControl(uint8_t channel, uint8_t databits, uint8_t stopbits, uint8_t parity);
     int configureFIFO(uint8_t channel, uint8_t txTrigger, uint8_t rxTrigger);
 
-    // Status and control
+    // Status and control methods
     UARTStatus getStatus(uint8_t channel);
     int getErrorStatus(uint8_t channel);
     bool isTxEmpty(uint8_t channel);
     bool isRxAvailable(uint8_t channel);
     TransferStats getTransferStats() const;
     void resetTransferStats();
+
+    // GPIO Methods
+    bool pinMode(uint8_t pin, uint8_t mode);
+    bool digitalWrite(uint8_t pin, uint8_t state);
+    int digitalRead(uint8_t pin);
+
+    // Analog Methods
+    void analogReadResolution(uint8_t bits);
+    int analogRead(uint8_t pin);
+    uint8_t getAnalogReadResolution() const;
+
+    // PWM Methods
+    bool pwmConfig(uint8_t pin, uint32_t frequency, uint16_t resolution = 8);
+    bool analogWrite(uint8_t pin, uint32_t value);
+    bool analogWriteResolution(uint8_t pin, uint16_t resolution);
+    bool analogWriteFrequency(uint8_t pin, uint32_t frequency);
+    PWMConfig getPWMConfig(uint8_t pin);
 
     // Register access methods
     int readReg(uint8_t reg);
@@ -328,22 +358,24 @@ protected:
     bool verifyRegisterWrite(uint8_t reg, uint8_t value);
     bool isValidChannel(uint8_t channel) const;
 
+// In SC16IS752.h, reorganize private members:
 private:
     //=====================================================================
-    // Private Members
+    // Private Members - Order matters for initialization
     //=====================================================================
-
-    TwoWire& _wire;                   // I2C interface
-    uint8_t _i2cAddr;                 // I2C address
-    bool _initialized;                // Initialization flag
-    uint32_t _currentBaudRate;        // Current baud rate
+    
+    TwoWire& _wire;                   // I2C interface (first)
+    #if defined(PLATFORM_ESP32) || defined(PLATFORM_ESP8266)
+    I2CPins _pins;                    // Platform-specific pins (second)
+    #endif
     TransferStats _stats;             // Performance tracking
     TransferTimings _timings;         // Timing configuration
-
-    #if defined(PLATFORM_ESP32) || defined(PLATFORM_ESP8266)
-    I2CPins _pins;                    // Platform-specific pins
+    PWMConfig _pwmConfig[8];          // PWM configurations
+    uint32_t _currentBaudRate;        // Current baud rate
     uint32_t _i2cFreq;               // I2C frequency
-    #endif
+    uint8_t _i2cAddr;                // I2C address
+    uint8_t _analogReadBits;         // ADC resolution
+    bool _initialized;               // Initialization flag (last)
 
     //=====================================================================
     // Private Methods
@@ -366,6 +398,13 @@ private:
     bool verifyTransfer(uint8_t channel, const uint8_t* txBuffer, size_t length);
     uint8_t getOptimalChunkSize(int lsr, int txlvl, size_t remaining, bool burstMode);
 
+    // GPIO and ADC helpers
+    bool isValidGPIO(uint8_t pin) const;
+    bool configureGPIOForPWM(uint8_t pin);
+    bool configureADC(uint8_t pin);
+    bool calculatePWMSettings(uint8_t pin);
+    uint32_t calculateOptimalDivider(uint32_t targetFreq, uint16_t resolution);
+
     // Performance optimization
     void adjustDelaysBasedOnPerformance();
     void updateTransferStatistics(bool success, size_t bytes, uint32_t timeMs);
@@ -380,6 +419,10 @@ private:
     inline T max(T a, T b) const {
         return (a > b) ? a : b;
     }
+
+    // Prevent copying
+    SC16IS752(const SC16IS752&);
+    SC16IS752& operator=(const SC16IS752&);
 };
 
 #endif // SC16IS752_H
