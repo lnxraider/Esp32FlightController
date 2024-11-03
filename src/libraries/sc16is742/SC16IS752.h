@@ -2,11 +2,14 @@
 #ifndef SC16IS752_H
 #define SC16IS752_H
 
+//=====================================================================
+// Platform Detection and Includes
+//=====================================================================
+
 #ifndef ESP32
 #define ESP32
 #endif
 
-// Platform detection
 #if defined(ARDUINO)
     #if defined(ESP32)
         #include <Arduino.h>
@@ -25,7 +28,10 @@
     #error "Unsupported platform"
 #endif
 
-// Global constants
+//=====================================================================
+// Global Configuration Constants
+//=====================================================================
+
 #define I2C_DEFAULT_ADDR 0x4D
 
 // Platform-specific defaults
@@ -41,14 +47,6 @@
     #define DEFAULT_I2C_FREQ 100000  // 100kHz for Arduino
 #endif
 
-   //=====================================================================
-    // ADC Definitions
-    //=====================================================================
-
-    static const uint8_t MIN_ADC_BITS = 8;
-    static const uint8_t MAX_ADC_BITS = 12;
-    static const uint8_t DEFAULT_ADC_BITS = 10;
-
 class SC16IS752 {
 public:
     //=====================================================================
@@ -56,14 +54,14 @@ public:
     //=====================================================================
 
     // Timeouts and Limits
-    static const unsigned long TX_TIMEOUT_MS = 1000;   // Transmit timeout
-    static const unsigned long RX_TIMEOUT_MS = 1000;   // Receive timeout
-    static const uint16_t MAX_TRANSFER_SIZE = 256;     // Maximum total transfer size
-    static const uint8_t MAX_RETRIES = 5;             // Maximum retry attempts
-    static const bool DEBUG_ENABLED = true;           // Enable debug output
+    static const unsigned long TX_TIMEOUT_MS = 1000;
+    static const unsigned long RX_TIMEOUT_MS = 1000;
+    static const uint16_t MAX_TRANSFER_SIZE = 256;
+    static const uint8_t MAX_RETRIES = 5;
+    static const bool DEBUG_ENABLED = true;
 
     // Error codes
-    static const int OK = 0;              // Success
+    static const int OK = 0;
     static const int ERR_PARAM = -1;      // Invalid parameter
     static const int ERR_I2C = -2;        // I2C communication error
     static const int ERR_TIMEOUT = -3;    // Operation timeout
@@ -75,18 +73,22 @@ public:
     static const int ERR_STATE = -9;      // Invalid state
 
     // Error status bit masks
-    static const uint8_t ERROR_OVERRUN = 0x01;    // Overrun error
-    static const uint8_t ERROR_PARITY = 0x02;     // Parity error
-    static const uint8_t ERROR_FRAMING = 0x04;    // Framing error
-    static const uint8_t ERROR_BREAK = 0x08;      // Break interrupt
-    static const uint8_t ERROR_FIFO = 0x10;       // FIFO error
+    static const uint8_t ERROR_OVERRUN = 0x01;
+    static const uint8_t ERROR_PARITY = 0x02;
+    static const uint8_t ERROR_FRAMING = 0x04;
+    static const uint8_t ERROR_BREAK = 0x08;
+    static const uint8_t ERROR_FIFO = 0x10;
 
     // Channel selection
     static const uint8_t CHANNEL_A = 0;
     static const uint8_t CHANNEL_B = 1;
     static const uint8_t MAX_CHANNELS = 2;
 
-    // Register Addresses
+    //=====================================================================
+    // Register Definitions
+    //=====================================================================
+
+    // UART Registers
     static const uint8_t REG_RHR = 0x00;       // Receive Holding Register (Read)
     static const uint8_t REG_THR = 0x00;       // Transmit Holding Register (Write)
     static const uint8_t REG_IER = 0x01;       // Interrupt Enable Register
@@ -103,49 +105,31 @@ public:
     static const uint8_t REG_DLH = 0x01;       // Divisor Latch MSB (LCR[7] = 1)
     static const uint8_t REG_EFR = 0x02;       // Enhanced Feature Register
 
-    // GPIO and Extended Functionality Registers
-    static const uint8_t REG_IOD = 0x0A;       // GPIO Data Register
-    static const uint8_t REG_IOSTATE = 0x0B;   // GPIO State Register
-    static const uint8_t REG_IODIR = 0x0A;     // GPIO Direction Register
-    static const uint8_t REG_IOINTENA = 0x0C;  // GPIO Interrupt Enable Register
-    static const uint8_t REG_IOCTRL = 0x0E;    // GPIO Control Register
+    // GPIO Registers
+    static const uint8_t REG_IODir = 0x0A;     // GPIO Direction Register
+    static const uint8_t REG_IOState = 0x0B;   // GPIO State Register
+    static const uint8_t REG_IOIntEna = 0x0C;  // GPIO Interrupt Enable Register
+    static const uint8_t REG_IOControl = 0x0E; // GPIO Control Register
     static const uint8_t REG_EFCR = 0x0F;      // Extra Features Control Register
-    
-    // ADC Registers
-    static const uint8_t REG_ADCCON = 0x14;    // ADC Control Register
-    static const uint8_t REG_ADCDAT = 0x15;    // ADC Data Register
-    static const uint8_t REG_ADCSEL = 0x16;    // ADC Channel Select Register
-    
+
     // PWM Registers
-    static const uint8_t REG_PWMCFG = 0x12;    // PWM Configuration Register
-    static const uint8_t REG_PWMDUTY = 0x13;   // PWM Duty Cycle Register
+    static const uint8_t REG_PWM_CTRL = 0x10;  // PWM Control Register
+    static const uint8_t REG_PWM_DUTY = 0x11;  // PWM Duty Cycle Register
+    static const uint8_t REG_PWM_PRE = 0x12;   // PWM Prescaler Register
 
-    // GPIO Pins
-    static const uint8_t GPIO_0 = 0;
-    static const uint8_t GPIO_1 = 1;
-    static const uint8_t GPIO_2 = 2;
-    static const uint8_t GPIO_3 = 3;
-    static const uint8_t GPIO_4 = 4;
-    static const uint8_t GPIO_5 = 5;
-    static const uint8_t GPIO_6 = 6;
-    static const uint8_t GPIO_7 = 7;
+    //=====================================================================
+    // Register Bit Definitions
+    //=====================================================================
 
-    // PWM Configuration
-    static const uint8_t MAX_PWM_RESOLUTION = 16;
-    static const uint8_t MIN_PWM_RESOLUTION = 8;
-    static const uint32_t MAX_PWM_FREQUENCY = 20000; // 20 kHz
-    static const uint32_t MIN_PWM_FREQUENCY = 10;    // 10 Hz
-    static const uint32_t XTAL_FREQ = 1843200;       // 1.8432 MHz crystal
-
-    // Register bit definitions
-    static const uint8_t LSR_DATA_READY = 0x01;        // Data ready
-    static const uint8_t LSR_OVERRUN_ERROR = 0x02;     // Overrun error
-    static const uint8_t LSR_PARITY_ERROR = 0x04;      // Parity error
-    static const uint8_t LSR_FRAMING_ERROR = 0x08;     // Framing error
-    static const uint8_t LSR_BREAK_INTERRUPT = 0x10;   // Break interrupt
-    static const uint8_t LSR_THR_EMPTY = 0x20;         // THR empty
-    static const uint8_t LSR_TRANSMITTER_EMPTY = 0x40; // Transmitter empty
-    static const uint8_t LSR_FIFO_ERROR = 0x80;        // FIFO error
+    // Line Status Register bits
+    static const uint8_t LSR_DATA_READY = 0x01;
+    static const uint8_t LSR_OVERRUN_ERROR = 0x02;
+    static const uint8_t LSR_PARITY_ERROR = 0x04;
+    static const uint8_t LSR_FRAMING_ERROR = 0x08;
+    static const uint8_t LSR_BREAK_INTERRUPT = 0x10;
+    static const uint8_t LSR_THR_EMPTY = 0x20;
+    static const uint8_t LSR_TRANSMITTER_EMPTY = 0x40;
+    static const uint8_t LSR_FIFO_ERROR = 0x80;
 
     // Line Control Register bits
     static const uint8_t LCR_WORD_LEN_5 = 0x00;
@@ -161,7 +145,7 @@ public:
     static const uint8_t LCR_DIVISOR_ENABLE = 0x80;
     static const uint8_t LCR_ACCESS_EFR = 0xBF;
 
-    // FIFO Control Register bits
+    // FIFO Control Register bits (add these to the public section)
     static const uint8_t FCR_FIFO_ENABLE = 0x01;
     static const uint8_t FCR_RX_FIFO_RESET = 0x02;
     static const uint8_t FCR_TX_FIFO_RESET = 0x04;
@@ -182,7 +166,43 @@ public:
     static const uint8_t MCR_XON_ANY = 0x20;
 
     //=====================================================================
-    // Public Structures
+    // GPIO and PWM Definitions
+    //=====================================================================
+
+    // GPIO Pin Definitions
+    static const uint8_t GPIO_0 = 0;
+    static const uint8_t GPIO_1 = 1;
+    static const uint8_t GPIO_2 = 2;
+    static const uint8_t GPIO_3 = 3;
+    static const uint8_t GPIO_4 = 4;
+    static const uint8_t GPIO_5 = 5;
+    static const uint8_t GPIO_6 = 6;
+    static const uint8_t GPIO_7 = 7;
+
+    // GPIO Direction and States (renamed to avoid Arduino conflicts)
+    static const uint8_t GPIO_INPUT = 0x01;
+    static const uint8_t GPIO_OUTPUT = 0x00;
+    static const uint8_t GPIO_LOW = 0x00;
+    static const uint8_t GPIO_HIGH = 0x01;
+
+    // PWM Constants
+    static const uint8_t PWM_OFF = 0x00;
+    static const uint8_t PWM_ON = 0x01;
+
+    enum class PWMResolution {
+        PWM_8_BIT = 8,
+        PWM_10_BIT = 10,
+        PWM_12_BIT = 12,
+        PWM_16_BIT = 16
+    };
+
+    enum class PWMClockSource {
+        XTAL = 0,      // Crystal/External Clock
+        INTERNAL = 1   // Internal oscillator
+    };
+
+    //=====================================================================
+    // Public Data Structures
     //=====================================================================
 
     #if defined(PLATFORM_ESP32) || defined(PLATFORM_ESP8266)
@@ -193,49 +213,6 @@ public:
             sda(sda_pin), scl(scl_pin) {}
     };
     #endif
-
-    struct PWMConfig {
-        uint32_t frequency;     // PWM frequency in Hz
-        uint16_t resolution;    // PWM resolution in bits (8-16)
-        uint16_t clockDivider; // Clock divider value
-        
-        PWMConfig(uint32_t freq = 1000, uint16_t res = 8) : 
-            frequency(freq), 
-            resolution(res),
-            clockDivider(0) {}
-    };
-
-    struct TransferTimings {
-        // Core timing constants
-        static const unsigned long SUSTAINED_RATE_BPS_SMALL = 982;
-        static const unsigned long SUSTAINED_RATE_BPS_LARGE = 719;
-        
-        // Configuration
-        static const uint32_t SMALL_PACKET_THRESHOLD = 32;
-        static const uint32_t FIFO_STABILIZE_TIME = 100;
-        static const uint32_t FIFO_WAIT_MS = 27;
-
-        // Dynamic parameters
-        uint32_t INTER_BYTE_DELAY_US;
-        uint32_t INTER_CHUNK_DELAY_US;
-        uint32_t STATUS_CHECK_DELAY_US;
-
-        TransferTimings() :
-            INTER_BYTE_DELAY_US(45),
-            INTER_CHUNK_DELAY_US(180),
-            STATUS_CHECK_DELAY_US(90) {}
-
-        void adjustForPacketSize(size_t packetSize);
-    };
-
-    struct TransferStates {
-        static const uint8_t CHUNK_SIZE = 8;
-        static const uint8_t BUFFER_SIZE = 16;
-        static const uint8_t LSR_READY = 0x60;
-        static const uint8_t LSR_BUSY = 0x21;
-        static const uint8_t LSR_DATA = 0x61;
-        static const uint8_t FIFO_FULL = 16;
-    };
 
     struct TransferResult {
         uint16_t bytesTransferred;
@@ -251,18 +228,34 @@ public:
     };
 
     struct UARTStatus {
-        uint8_t lsr;     // Line Status Register
-        uint8_t msr;     // Modem Status Register
-        uint8_t txlvl;   // TX FIFO Level
-        uint8_t rxlvl;   // RX FIFO Level
-        int8_t error;    // Error code
+        uint8_t lsr;
+        uint8_t msr;
+        uint8_t txlvl;
+        uint8_t rxlvl;
+        int8_t error;
 
         UARTStatus() :
-            lsr(0),
-            msr(0),
-            txlvl(0),
-            rxlvl(0),
-            error(OK) {}
+            lsr(0), msr(0), txlvl(0), rxlvl(0), error(OK) {}
+    };
+
+
+    struct TransferTimings {
+        static const unsigned long SUSTAINED_RATE_BPS_SMALL = 982;
+        static const unsigned long SUSTAINED_RATE_BPS_LARGE = 719;
+        static const uint32_t SMALL_PACKET_THRESHOLD = 32;
+        static const uint32_t FIFO_STABILIZE_TIME = 100;
+        static const uint32_t FIFO_WAIT_MS = 27;
+
+        uint32_t INTER_BYTE_DELAY_US;
+        uint32_t INTER_CHUNK_DELAY_US;
+        uint32_t STATUS_CHECK_DELAY_US;
+
+        TransferTimings() :
+            INTER_BYTE_DELAY_US(45),
+            INTER_CHUNK_DELAY_US(180),
+            STATUS_CHECK_DELAY_US(90) {}
+
+        void adjustForPacketSize(size_t packetSize);
     };
 
     struct TransferStats {
@@ -274,10 +267,41 @@ public:
         uint32_t maxSuccessiveTransfers;
         uint32_t currentSuccessiveTransfers;
 
-        TransferStats();
-        void reset();
-        void updateRate();
-        void recordTransfer(bool success, size_t bytes, uint32_t timeMs);
+        TransferStats() {
+            reset();
+        }
+
+        void reset() {
+            totalTransfers = 0;
+            successfulTransfers = 0;
+            totalBytes = 0;
+            totalTimeMs = 0;
+            averageRate = 0;
+            maxSuccessiveTransfers = 0;
+            currentSuccessiveTransfers = 0;
+        }
+
+        void updateRate() {
+            if (totalTimeMs > 0) {
+                averageRate = (float)(totalBytes * 1000) / totalTimeMs;
+            }
+        }
+
+        void recordTransfer(bool success, size_t bytes, uint32_t timeMs) {
+            totalTransfers++;
+            if (success) {
+                successfulTransfers++;
+                totalBytes += bytes;
+                totalTimeMs += timeMs;
+                currentSuccessiveTransfers++;
+                if (currentSuccessiveTransfers > maxSuccessiveTransfers) {
+                    maxSuccessiveTransfers = currentSuccessiveTransfers;
+                }
+            } else {
+                currentSuccessiveTransfers = 0;
+            }
+            updateRate();
+        }
     };
 
     //=====================================================================
@@ -291,60 +315,58 @@ public:
     explicit SC16IS752(TwoWire& wire = Wire);
     #endif
 
-    // Initialization
+    // Initialization Methods
     bool begin(uint8_t i2cAddr = I2C_DEFAULT_ADDR, uint32_t i2cFreq = DEFAULT_I2C_FREQ);
     void end();
     bool detectDevice();
-    int initializeUART(uint8_t channel, uint32_t baudRate, bool testMode = false, uint32_t xtalFreq = 1843200);
 
-    // Data transfer operations
+    // UART Configuration and Status
+    int initializeUART(uint8_t channel, uint32_t baudRate, bool testMode = false, uint32_t xtalFreq = 1843200);
+    int setBaudRate(uint8_t channel, uint32_t baud, uint32_t xtalFreq = 1843200);
+    int setLineControl(uint8_t channel, uint8_t databits, uint8_t stopbits, uint8_t parity);
+    int configureFIFO(uint8_t channel, uint8_t txTrigger, uint8_t rxTrigger);
+    UARTStatus getStatus(uint8_t channel);
+    int getErrorStatus(uint8_t channel);
+    bool isTxEmpty(uint8_t channel);
+    bool isRxAvailable(uint8_t channel);
+
+    // UART Transfer Methods
     TransferResult writeBufferOptimized(uint8_t channel, const uint8_t* buffer, size_t length);
     TransferResult readBufferOptimized(uint8_t channel, uint8_t* buffer, size_t length);
     TransferResult writeBufferChunked(uint8_t channel, const uint8_t* buffer, size_t length);
     TransferResult readBufferChunked(uint8_t channel, uint8_t* buffer, size_t length);
-
-    // Simple transfer operations
     int writeByte(uint8_t channel, uint8_t data);
     int readByte(uint8_t channel);
     size_t writeBytes(uint8_t channel, const uint8_t* data, size_t length);
     size_t readBytes(uint8_t channel, uint8_t* buffer, size_t length);
 
-    // Configuration methods
-    int setBaudRate(uint8_t channel, uint32_t baud, uint32_t xtalFreq = 1843200);
-    int setLineControl(uint8_t channel, uint8_t databits, uint8_t stopbits, uint8_t parity);
-    int configureFIFO(uint8_t channel, uint8_t txTrigger, uint8_t rxTrigger);
+    // GPIO Methods
+    void pinMode(uint8_t pin, uint8_t mode);
+    void digitalWrite(uint8_t pin, uint8_t state);
+    uint8_t digitalRead(uint8_t pin);
 
-    // Status and control methods
-    UARTStatus getStatus(uint8_t channel);
-    int getErrorStatus(uint8_t channel);
-    bool isTxEmpty(uint8_t channel);
-    bool isRxAvailable(uint8_t channel);
+    // PWM Methods
+    bool pwmBegin(uint8_t pin, uint32_t frequency = 1000, PWMResolution resolution = PWMResolution::PWM_8_BIT);
+    void pwmWrite(uint8_t pin, uint32_t value);
+    void pwmWriteHR(uint8_t pin, uint32_t value);
+    void pwmWriteFrequency(uint8_t pin, uint32_t frequency);
+    void pwmWriteResolution(uint8_t pin, PWMResolution resolution);
+    uint32_t pwmGetMaxValue(uint8_t pin) const;
+    uint32_t pwmGetResolution(uint8_t pin) const;
+    uint32_t pwmGetFrequency(uint8_t pin) const;
+    void pwmSetClockSource(PWMClockSource source);
+    void pwmEnd(uint8_t pin);
+    void analogWrite(uint8_t pin, uint8_t value);
+
+    // Statistics and Debug
     TransferStats getTransferStats() const;
     void resetTransferStats();
 
-    // GPIO Methods
-    bool pinMode(uint8_t pin, uint8_t mode);
-    bool digitalWrite(uint8_t pin, uint8_t state);
-    int digitalRead(uint8_t pin);
-
-    // Analog Methods
-    void analogReadResolution(uint8_t bits);
-    int analogRead(uint8_t pin);
-    uint8_t getAnalogReadResolution() const;
-
-    // PWM Methods
-    bool pwmConfig(uint8_t pin, uint32_t frequency, uint16_t resolution = 8);
-    bool analogWrite(uint8_t pin, uint32_t value);
-    bool analogWriteResolution(uint8_t pin, uint16_t resolution);
-    bool analogWriteFrequency(uint8_t pin, uint32_t frequency);
-    PWMConfig getPWMConfig(uint8_t pin);
-
-    // Register access methods
+    // Register Access Methods
     int readReg(uint8_t reg);
     int writeReg(uint8_t reg, uint8_t value);
     uint8_t regAddr(uint8_t reg, uint8_t channel) const;
 
-    // Platform-specific methods
     #if defined(PLATFORM_ESP32) || defined(PLATFORM_ESP8266)
     bool setPins(int sda, int scl);
     bool setI2CFrequency(uint32_t frequency);
@@ -357,30 +379,63 @@ protected:
     
     bool verifyRegisterWrite(uint8_t reg, uint8_t value);
     bool isValidChannel(uint8_t channel) const;
+    bool isValidGPIOPin(uint8_t pin) const;
 
-// In SC16IS752.h, reorganize private members:
 private:
     //=====================================================================
-    // Private Members - Order matters for initialization
+    // Private Data Structures
     //=====================================================================
-    
-    TwoWire& _wire;                   // I2C interface (first)
-    #if defined(PLATFORM_ESP32) || defined(PLATFORM_ESP8266)
-    I2CPins _pins;                    // Platform-specific pins (second)
-    #endif
+
+    struct PWMState {
+        bool enabled;
+        uint32_t frequency;
+        uint32_t dutyCycle;
+        uint32_t prescaler;
+        PWMResolution resolution;
+        PWMClockSource clockSource;
+        
+        PWMState() : 
+            enabled(false), 
+            frequency(1000), 
+            dutyCycle(0), 
+            prescaler(1),
+            resolution(PWMResolution::PWM_8_BIT),
+            clockSource(PWMClockSource::XTAL) {}
+    };
+
+    struct TransferStates {
+        static const uint8_t CHUNK_SIZE = 8;
+        static const uint8_t BUFFER_SIZE = 16;
+        static const uint8_t LSR_READY = 0x60;
+        static const uint8_t LSR_BUSY = 0x21;
+        static const uint8_t LSR_DATA = 0x61;
+        static const uint8_t FIFO_FULL = 16;
+    };
+
+    //=====================================================================
+    // Private Members
+    //=====================================================================
+
+    TwoWire& _wire;                   // I2C interface
+    uint8_t _i2cAddr;                 // I2C address
+    bool _initialized;                // Initialization flag
+    uint32_t _currentBaudRate;        // Current baud rate
+    uint8_t _gpioDirection;           // Cache GPIO direction register
+    uint8_t _gpioState;              // Cache GPIO state register
+    PWMState _pwmStates[8];          // PWM state for each pin
     TransferStats _stats;             // Performance tracking
     TransferTimings _timings;         // Timing configuration
-    PWMConfig _pwmConfig[8];          // PWM configurations
-    uint32_t _currentBaudRate;        // Current baud rate
+
+    #if defined(PLATFORM_ESP32) || defined(PLATFORM_ESP8266)
+    I2CPins _pins;                    // Platform-specific pins
     uint32_t _i2cFreq;               // I2C frequency
-    uint8_t _i2cAddr;                // I2C address
-    uint8_t _analogReadBits;         // ADC resolution
-    bool _initialized;               // Initialization flag (last)
+    #endif
 
     //=====================================================================
     // Private Methods
     //=====================================================================
 
+    // I2C and Platform-specific methods
     #if defined(PLATFORM_ESP32) || defined(PLATFORM_ESP8266)
     bool initI2C();                   // Initialize I2C interface
     #endif
@@ -398,12 +453,15 @@ private:
     bool verifyTransfer(uint8_t channel, const uint8_t* txBuffer, size_t length);
     uint8_t getOptimalChunkSize(int lsr, int txlvl, size_t remaining, bool burstMode);
 
-    // GPIO and ADC helpers
-    bool isValidGPIO(uint8_t pin) const;
-    bool configureGPIOForPWM(uint8_t pin);
-    bool configureADC(uint8_t pin);
-    bool calculatePWMSettings(uint8_t pin);
-    uint32_t calculateOptimalDivider(uint32_t targetFreq, uint16_t resolution);
+    // GPIO helpers
+    void updateGPIORegister(uint8_t reg, uint8_t pin, uint8_t value);
+    uint8_t readGPIORegister(uint8_t reg, uint8_t pin);
+
+    // PWM helpers
+    void updatePWMPrescaler(uint8_t pin);
+    void updatePWMSettings(uint8_t pin);
+    uint32_t calculatePrescaler(uint32_t targetFreq, PWMResolution resolution) const;
+    uint32_t getClockFrequency() const;
 
     // Performance optimization
     void adjustDelaysBasedOnPerformance();
@@ -419,10 +477,6 @@ private:
     inline T max(T a, T b) const {
         return (a > b) ? a : b;
     }
-
-    // Prevent copying
-    SC16IS752(const SC16IS752&);
-    SC16IS752& operator=(const SC16IS752&);
 };
 
 #endif // SC16IS752_H

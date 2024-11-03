@@ -8,34 +8,27 @@
 #if defined(PLATFORM_ESP32) || defined(PLATFORM_ESP8266)
 SC16IS752::SC16IS752(TwoWire& wire, const I2CPins& pins) :
     _wire(wire),
-    _pins(pins),
+    _i2cAddr(0),
+    _initialized(false),
+    _currentBaudRate(0),
+    _gpioDirection(0),
+    _gpioState(0),
+    _pwmStates(),
     _stats(),
     _timings(),
-    _currentBaudRate(0),
-    _i2cFreq(DEFAULT_I2C_FREQ),
-    _i2cAddr(0),
-    _analogReadBits(DEFAULT_ADC_BITS),
-    _initialized(false) {
-    // Initialize PWM configurations
-    for (int i = 0; i < 8; i++) {
-        _pwmConfig[i] = PWMConfig();
-    }
-}
+    _pins(pins),
+    _i2cFreq(DEFAULT_I2C_FREQ) {}
 #else
 SC16IS752::SC16IS752(TwoWire& wire) :
     _wire(wire),
-    _stats(),
-    _timings(),
-    _currentBaudRate(0),
-    _i2cFreq(DEFAULT_I2C_FREQ),
     _i2cAddr(0),
-    _analogReadBits(DEFAULT_ADC_BITS),
-    _initialized(false) {
-    // Initialize PWM configurations
-    for (int i = 0; i < 8; i++) {
-        _pwmConfig[i] = PWMConfig();
-    }
-}
+    _initialized(false),
+    _currentBaudRate(0),
+    _gpioDirection(0),
+    _gpioState(0),
+    _pwmStates(),
+    _stats(),
+    _timings() {}
 #endif
 
 bool SC16IS752::begin(uint8_t i2cAddr, uint32_t i2cFreq) {
@@ -55,25 +48,12 @@ bool SC16IS752::begin(uint8_t i2cAddr, uint32_t i2cFreq) {
     _wire.setClock(i2cFreq);
     #endif
 
-    if (!detectDevice()) {
+    // Test device presence with scratch register
+    uint8_t testValue = 0x55;
+    if (!verifyRegisterWrite(regAddr(REG_SPR, CHANNEL_A), testValue)) {
         if (DEBUG_ENABLED) {
-            Serial.println(F("Device not detected"));
+            Serial.println(F("Device verification failed"));
         }
-        return false;
-    }
-    
-    // Initialize all GPIO pins as inputs (high impedance state)
-    if (writeReg(regAddr(REG_IODIR, CHANNEL_A), 0xFF) != OK) {
-        return false;
-    }
-    
-    // Disable all GPIO interrupts initially
-    if (writeReg(regAddr(REG_IOINTENA, CHANNEL_A), 0x00) != OK) {
-        return false;
-    }
-    
-    // Reset all PWM configurations
-    if (writeReg(regAddr(REG_EFCR, CHANNEL_A), 0x00) != OK) {
         return false;
     }
 
@@ -83,14 +63,21 @@ bool SC16IS752::begin(uint8_t i2cAddr, uint32_t i2cFreq) {
 
 void SC16IS752::end() {
     if (_initialized) {
-        // Reset all GPIO pins to inputs
-        writeReg(regAddr(REG_IODIR, CHANNEL_A), 0xFF);
-        // Disable all PWM outputs
-        writeReg(regAddr(REG_EFCR, CHANNEL_A), 0x00);
-        
+        // Disable all PWM channels
+        for (uint8_t i = 0; i < 8; i++) {
+            if (_pwmStates[i].enabled) {
+                pwmEnd(i);
+            }
+        }
+
+        // Reset GPIO states
+        _gpioDirection = 0;
+        _gpioState = 0;
+
         #if defined(PLATFORM_ESP32) || defined(PLATFORM_ESP8266)
         _wire.end();
         #endif
+        
         _initialized = false;
         _stats.reset();
     }
@@ -102,282 +89,106 @@ bool SC16IS752::detectDevice() {
 }
 
 //=====================================================================
-// GPIO Methods
+// Register Access Methods
 //=====================================================================
 
-bool SC16IS752::isValidGPIO(uint8_t pin) const {
-    return pin <= GPIO_7;
+int SC16IS752::writeReg(uint8_t reg, uint8_t value) {
+    if (!_initialized && reg != regAddr(REG_SPR, CHANNEL_A)) {
+        return ERR_STATE;
+    }
+
+    for (uint8_t retry = 0; retry < MAX_RETRIES; retry++) {
+        _wire.beginTransmission(_i2cAddr);
+        if (_wire.write(reg) != 1 || _wire.write(value) != 1) {
+            delayMicroseconds(50);
+            continue;
+        }
+
+        if (_wire.endTransmission() == 0) {
+            return OK;
+        }
+        delayMicroseconds(100);
+    }
+
+    return ERR_I2C;
 }
 
-bool SC16IS752::pinMode(uint8_t pin, uint8_t mode) {
-    if (!isValidGPIO(pin)) {
+int SC16IS752::readReg(uint8_t reg) {
+    if (!_initialized && reg != regAddr(REG_SPR, CHANNEL_A)) {
+        return ERR_STATE;
+    }
+
+    for (uint8_t retry = 0; retry < MAX_RETRIES; retry++) {
+        _wire.beginTransmission(_i2cAddr);
+        if (_wire.write(reg) != 1 || _wire.endTransmission(false) != 0) {
+            delayMicroseconds(50);
+            continue;
+        }
+
+        if (_wire.requestFrom(_i2cAddr, (uint8_t)1) != 1) {
+            delayMicroseconds(50);
+            continue;
+        }
+
+        return _wire.read();
+    }
+
+    return ERR_I2C;
+}
+
+bool SC16IS752::verifyRegisterWrite(uint8_t reg, uint8_t value) {
+    if (writeReg(reg, value) != OK) {
         return false;
     }
 
-    // Read current direction register
-    int iodir = readReg(regAddr(REG_IODIR, CHANNEL_A));
-    if (iodir < 0) {
-        return false;
-    }
+    #if defined(PLATFORM_ESP32) || defined(PLATFORM_ESP8266)
+    delayMicroseconds(200);
+    #else
+    delayMicroseconds(100);
+    #endif
 
-    // Set direction bit (1 = input, 0 = output)
-    if (mode == INPUT) {
-        iodir |= (1 << pin);
+    int readValue = readReg(reg);
+    return (readValue >= 0) && ((uint8_t)readValue == value);
+}
+
+uint8_t SC16IS752::regAddr(uint8_t reg, uint8_t channel) const {
+    return (reg << 3) | (channel ? 0x02 : 0x00);
+}
+
+//=====================================================================
+// Platform-Specific Methods
+//=====================================================================
+
+#if defined(PLATFORM_ESP32) || defined(PLATFORM_ESP8266)
+bool SC16IS752::initI2C() {
+    if (_pins.sda >= 0 && _pins.scl >= 0) {
+        if (!_wire.begin(_pins.sda, _pins.scl)) {
+            return false;
+        }
     } else {
-        iodir &= ~(1 << pin);
-        
-        // If configuring as output, disable PWM for this pin
-        int efcr = readReg(regAddr(REG_EFCR, CHANNEL_A));
-        if (efcr >= 0) {
-            efcr &= ~(1 << (pin + 4)); // Clear PWM enable bit
-            writeReg(regAddr(REG_EFCR, CHANNEL_A), efcr);
+        if (!_wire.begin()) {
+            return false;
         }
     }
-
-    // Write back to direction register
-    return (writeReg(regAddr(REG_IODIR, CHANNEL_A), iodir) == OK);
+    _wire.setClock(_i2cFreq);
+    return true;
 }
 
-bool SC16IS752::digitalWrite(uint8_t pin, uint8_t state) {
-    if (!isValidGPIO(pin)) {
-        return false;
+bool SC16IS752::setPins(int sda, int scl) {
+    if (_initialized) {
+        _wire.end();
     }
-
-    // Check if pin is configured as output
-    int iodir = readReg(regAddr(REG_IODIR, CHANNEL_A));
-    if (iodir < 0 || (iodir & (1 << pin))) {
-        return false; // Pin is not configured as output
-    }
-
-    // Read current state
-    int iostate = readReg(regAddr(REG_IOD, CHANNEL_A));
-    if (iostate < 0) {
-        return false;
-    }
-
-    // Set or clear the pin
-    if (state == HIGH) {
-        iostate |= (1 << pin);
-    } else {
-        iostate &= ~(1 << pin);
-    }
-
-    // Write back to state register
-    return (writeReg(regAddr(REG_IOD, CHANNEL_A), iostate) == OK);
+    _pins.sda = sda;
+    _pins.scl = scl;
+    return initI2C();
 }
 
-int SC16IS752::digitalRead(uint8_t pin) {
-    if (!isValidGPIO(pin)) {
-        return -1;
-    }
-
-    // Read current state
-    int iostate = readReg(regAddr(REG_IOSTATE, CHANNEL_A));
-    if (iostate < 0) {
-        return -1;
-    }
-
-    // Return pin state (HIGH or LOW)
-    return (iostate & (1 << pin)) ? HIGH : LOW;
+bool SC16IS752::setI2CFrequency(uint32_t frequency) {
+    _i2cFreq = frequency;
+    _wire.setClock(frequency);
+    return true;
 }
-
-//=====================================================================
-// Analog Read Implementation
-//=====================================================================
-
-void SC16IS752::analogReadResolution(uint8_t bits) {
-    if (bits < MIN_ADC_BITS) bits = MIN_ADC_BITS;
-    if (bits > MAX_ADC_BITS) bits = MAX_ADC_BITS;
-    _analogReadBits = bits;
-}
-
-bool SC16IS752::configureADC(uint8_t pin) {
-    if (!isValidGPIO(pin)) {
-        return false;
-    }
-
-    // Configure GPIO pin for analog input
-    if (!pinMode(pin, INPUT)) {
-        return false;
-    }
-
-    // Select ADC channel
-    if (writeReg(regAddr(REG_ADCSEL, CHANNEL_A), pin) != OK) {
-        return false;
-    }
-
-    // Configure ADC resolution and enable
-    uint8_t adcConfig = 0x01;  // Enable ADC
-
-    switch (_analogReadBits) {
-        case 8:  adcConfig |= 0x00; break;
-        case 9:  adcConfig |= 0x20; break;
-        case 10: adcConfig |= 0x40; break;
-        case 11: adcConfig |= 0x60; break;
-        case 12: adcConfig |= 0x80; break;
-        default: adcConfig |= 0x40; break; // Default to 10-bit
-    }
-
-    return (writeReg(regAddr(REG_ADCCON, CHANNEL_A), adcConfig) == OK);
-}
-
-int SC16IS752::analogRead(uint8_t pin) {
-    if (!isValidGPIO(pin)) {
-        return -1;
-    }
-
-    if (!configureADC(pin)) {
-        return -1;
-    }
-
-    // Wait for conversion
-    delay(2);  // Typical ADC conversion time
-
-    // Read ADC data
-    int adcLow = readReg(regAddr(REG_ADCDAT, CHANNEL_A));
-    int adcHigh = readReg(regAddr(REG_ADCDAT + 1, CHANNEL_A));
-
-    if (adcLow < 0 || adcHigh < 0) {
-        return -1;
-    }
-
-    // Combine readings
-    uint16_t rawValue = (adcHigh << 8) | adcLow;
-
-    // Scale to requested resolution
-    uint16_t maxValue = (1 << _analogReadBits) - 1;
-    return map(rawValue, 0, 4095, 0, maxValue);
-}
-
-//=====================================================================
-// PWM Implementation
-//=====================================================================
-
-bool SC16IS752::configureGPIOForPWM(uint8_t pin) {
-    if (!isValidGPIO(pin)) {
-        return false;
-    }
-
-    // Configure pin as output
-    if (!pinMode(pin, OUTPUT)) {
-        return false;
-    }
-
-    // Read current EFCR
-    int efcr = readReg(regAddr(REG_EFCR, CHANNEL_A));
-    if (efcr < 0) {
-        return false;
-    }
-
-    // Enable PWM for this pin
-    efcr |= (1 << (pin + 4));  // PWM enable bits start at bit 4
-
-    return (writeReg(regAddr(REG_EFCR, CHANNEL_A), efcr) == OK);
-}
-
-bool SC16IS752::pwmConfig(uint8_t pin, uint32_t frequency, uint16_t resolution) {
-    if (!isValidGPIO(pin)) {
-        return false;
-    }
-
-    // Validate frequency and resolution
-    if (frequency < MIN_PWM_FREQUENCY || frequency > MAX_PWM_FREQUENCY ||
-        resolution < MIN_PWM_RESOLUTION || resolution > MAX_PWM_RESOLUTION) {
-        return false;
-    }
-
-    // Store configuration
-    _pwmConfig[pin].frequency = frequency;
-    _pwmConfig[pin].resolution = resolution;
-
-    // Calculate and apply PWM settings
-    if (!calculatePWMSettings(pin)) {
-        return false;
-    }
-
-    // Configure GPIO for PWM
-    return configureGPIOForPWM(pin);
-}
-
-bool SC16IS752::calculatePWMSettings(uint8_t pin) {
-    PWMConfig& config = _pwmConfig[pin];
-
-    // Calculate optimal divider for desired frequency and resolution
-    config.clockDivider = calculateOptimalDivider(config.frequency, config.resolution);
-
-    if (config.clockDivider == 0) {
-        return false;
-    }
-
-    // Configure PWM clock prescaler
-    return (writeReg(regAddr(REG_PWMCFG, CHANNEL_A),
-                    (config.clockDivider - 1) & 0xFF) == OK);
-}
-
-uint32_t SC16IS752::calculateOptimalDivider(uint32_t targetFreq, uint16_t resolution) {
-    uint32_t maxCount = (1UL << resolution) - 1;
-    uint32_t desiredDivider = XTAL_FREQ / (targetFreq * maxCount);
-
-    // Round to nearest available divider (1-256)
-    if (desiredDivider < 1) return 1;
-    if (desiredDivider > 256) return 256;
-
-    return desiredDivider;
-}
-
-bool SC16IS752::analogWrite(uint8_t pin, uint32_t value) {
-    if (!isValidGPIO(pin)) {
-        return false;
-    }
-
-    // Get pin's PWM configuration
-    PWMConfig& config = _pwmConfig[pin];
-    uint32_t maxValue = (1UL << config.resolution) - 1;
-
-    // Constrain value to resolution
-    if (value > maxValue) {
-        value = maxValue;
-    }
-
-    // Scale value to 8-bit for hardware register
-    uint8_t scaledValue;
-    if (config.resolution > 8) {
-        scaledValue = value >> (config.resolution - 8);
-    } else {
-        scaledValue = value << (8 - config.resolution);
-    }
-
-    return (writeReg(regAddr(REG_PWMDUTY + pin, CHANNEL_A), scaledValue) == OK);
-}
-
-bool SC16IS752::analogWriteResolution(uint8_t pin, uint16_t resolution) {
-    if (!isValidGPIO(pin) ||
-        resolution < MIN_PWM_RESOLUTION ||
-        resolution > MAX_PWM_RESOLUTION) {
-        return false;
-    }
-
-    _pwmConfig[pin].resolution = resolution;
-    return calculatePWMSettings(pin);
-}
-
-bool SC16IS752::analogWriteFrequency(uint8_t pin, uint32_t frequency) {
-    if (!isValidGPIO(pin) ||
-        frequency < MIN_PWM_FREQUENCY ||
-        frequency > MAX_PWM_FREQUENCY) {
-        return false;
-    }
-
-    _pwmConfig[pin].frequency = frequency;
-    return calculatePWMSettings(pin);
-}
-
-SC16IS752::PWMConfig SC16IS752::getPWMConfig(uint8_t pin) {
-    if (isValidGPIO(pin)) {
-        return _pwmConfig[pin];
-    }
-    return PWMConfig(); // Return default config if invalid pin
-}
+#endif
 
 //=====================================================================
 // UART Configuration
@@ -444,17 +255,11 @@ int SC16IS752::initializeUART(uint8_t channel, uint32_t baudRate, bool testMode,
             return ERR_VERIFY;
         }
     } else {
-        // Normal operation mode setup
-        // Configure FIFOs with standard triggers
+        // Normal operation mode
+        // Configure FIFOs with default triggers
         result = writeReg(regAddr(REG_FCR, channel),
                          FCR_FIFO_ENABLE | FCR_TX_TRIGGER_LVL2 | FCR_RX_TRIGGER_LVL2);
         if (result != OK) return result;
-        delay(10);
-
-        // Configure modem control
-        result = writeReg(regAddr(REG_MCR, channel), MCR_RTS | MCR_DTR);
-        if (result != OK) return result;
-        delay(10);
     }
 
     // Disable all interrupts
@@ -517,7 +322,7 @@ int SC16IS752::configureFIFO(uint8_t channel, uint8_t txTrigger, uint8_t rxTrigg
 }
 
 //=====================================================================
-// Status and Control Methods
+// UART Status Methods
 //=====================================================================
 
 SC16IS752::UARTStatus SC16IS752::getStatus(uint8_t channel) {
@@ -576,7 +381,7 @@ bool SC16IS752::isRxAvailable(uint8_t channel) {
 }
 
 //=====================================================================
-// Transfer Operations
+// Optimized Transfer Operations
 //=====================================================================
 
 SC16IS752::TransferResult SC16IS752::writeBufferOptimized(uint8_t channel, const uint8_t* buffer, size_t length) {
@@ -586,7 +391,7 @@ SC16IS752::TransferResult SC16IS752::writeBufferOptimized(uint8_t channel, const
     result.complete = false;
     result.timeMs = 0;
 
-    if (!isValidChannel(channel) || !buffer || length != TransferStates::BUFFER_SIZE) {
+    if (!isValidChannel(channel) || !buffer || length > MAX_TRANSFER_SIZE) {
         result.error = ERR_PARAM;
         _stats.recordTransfer(false, 0, 0);
         return result;
@@ -594,7 +399,6 @@ SC16IS752::TransferResult SC16IS752::writeBufferOptimized(uint8_t channel, const
 
     // Adjust timing based on transfer size
     _timings.adjustForPacketSize(length);
-
     unsigned long startTime = millis();
 
     // Fast initial state check
@@ -609,30 +413,40 @@ SC16IS752::TransferResult SC16IS752::writeBufferOptimized(uint8_t channel, const
         }
     }
 
-    // Write first chunk (8 bytes)
-    for (size_t i = 0; i < TransferStates::CHUNK_SIZE; i++) {
-        if (writeReg(regAddr(REG_THR, channel), buffer[i]) != OK) {
-            result.timeMs = millis() - startTime;
-            result.error = ERR_I2C;
-            _stats.recordTransfer(false, result.bytesTransferred, result.timeMs);
-            return result;
-        }
-        result.bytesTransferred++;
-        delayMicroseconds(_timings.INTER_BYTE_DELAY_US);
-    }
+    size_t bytesRemaining = length;
+    size_t currentIndex = 0;
 
-    delayMicroseconds(_timings.INTER_CHUNK_DELAY_US);
-
-    // Write second chunk (8 bytes)
-    for (size_t i = TransferStates::CHUNK_SIZE; i < TransferStates::BUFFER_SIZE; i++) {
-        if (writeReg(regAddr(REG_THR, channel), buffer[i]) != OK) {
-            result.timeMs = millis() - startTime;
-            result.error = ERR_I2C;
-            _stats.recordTransfer(false, result.bytesTransferred, result.timeMs);
-            return result;
+    while (bytesRemaining > 0) {
+        int txlvl = readReg(regAddr(REG_TXLVL, channel));
+        if (txlvl <= 0) {
+            delayMicroseconds(_timings.STATUS_CHECK_DELAY_US);
+            continue;
         }
-        result.bytesTransferred++;
-        delayMicroseconds(_timings.INTER_BYTE_DELAY_US);
+
+        uint8_t chunkSize = getOptimalChunkSize(lsr, txlvl, bytesRemaining,
+                                              _stats.currentSuccessiveTransfers > 50);
+
+        for (uint8_t i = 0; i < chunkSize; i++) {
+            if (writeReg(regAddr(REG_THR, channel), buffer[currentIndex + i]) != OK) {
+                result.timeMs = millis() - startTime;
+                result.error = ERR_I2C;
+                _stats.recordTransfer(false, result.bytesTransferred, result.timeMs);
+                return result;
+            }
+            result.bytesTransferred++;
+            bytesRemaining--;
+            delayMicroseconds(_timings.INTER_BYTE_DELAY_US);
+        }
+
+        currentIndex += chunkSize;
+        delayMicroseconds(_timings.INTER_CHUNK_DELAY_US);
+
+        // Check LSR for errors
+        lsr = readReg(regAddr(REG_LSR, channel));
+        if (lsr & (LSR_FRAMING_ERROR | LSR_PARITY_ERROR | LSR_OVERRUN_ERROR | LSR_BREAK_INTERRUPT)) {
+            result.error = ERR_FIFO;
+            break;
+        }
     }
 
     result.timeMs = millis() - startTime;
@@ -650,158 +464,59 @@ SC16IS752::TransferResult SC16IS752::readBufferOptimized(uint8_t channel, uint8_
     result.complete = false;
     result.timeMs = 0;
 
-    if (!isValidChannel(channel) || !buffer || length != TransferStates::BUFFER_SIZE) {
+    if (!isValidChannel(channel) || !buffer || length > MAX_TRANSFER_SIZE) {
         result.error = ERR_PARAM;
         _stats.recordTransfer(false, 0, 0);
         return result;
     }
 
     unsigned long startTime = millis();
+    size_t bytesRemaining = length;
+    size_t currentIndex = 0;
 
-    // Wait for FIFO to fill
-    delay(_timings.FIFO_WAIT_MS);
-
-    // Quick FIFO check
-    int rxlvl = readReg(regAddr(REG_RXLVL, channel));
-    if (rxlvl != TransferStates::FIFO_FULL) {
-        delayMicroseconds(_timings.STATUS_CHECK_DELAY_US);
-        rxlvl = readReg(regAddr(REG_RXLVL, channel));
-        if (rxlvl != TransferStates::FIFO_FULL) {
-            result.error = ERR_TIMEOUT;
-            _stats.recordTransfer(false, 0, 0);
-            return result;
-        }
-    }
-
-    // Read all bytes with optimized timing
-    for (size_t i = 0; i < length; i++) {
-        int value = readReg(regAddr(REG_RHR, channel));
-        if (value < 0) {
-            result.timeMs = millis() - startTime;
-            result.error = ERR_I2C;
-            _stats.recordTransfer(false, result.bytesTransferred, result.timeMs);
-            return result;
-        }
-        buffer[i] = value;
-        result.bytesTransferred++;
-
-        // Dynamic delay based on performance
-        if (_stats.currentSuccessiveTransfers > 50) {
-            delayMicroseconds(_timings.INTER_BYTE_DELAY_US / 2);
-        } else {
-            delayMicroseconds(_timings.INTER_BYTE_DELAY_US);
-        }
-    }
-
-    result.timeMs = millis() - startTime;
-    result.complete = (result.bytesTransferred == length);
-    _stats.recordTransfer(result.complete, result.bytesTransferred, result.timeMs);
-
-    return result;
-}
-
-SC16IS752::TransferResult SC16IS752::writeBufferChunked(uint8_t channel, const uint8_t* buffer, size_t length) {
-    TransferResult result;
-    result.bytesTransferred = 0;
-    result.error = OK;
-    result.complete = false;
-    result.timeMs = 0;
-
-    if (!isValidChannel(channel) || !buffer || length == 0 || length > MAX_TRANSFER_SIZE) {
-        result.error = ERR_PARAM;
-        return result;
-    }
-
-    _timings.adjustForPacketSize(length);
-    unsigned long startTime = millis();
-    size_t currentOffset = 0;
-
-    while (currentOffset < length) {
-        if (!waitForTxReady(channel, TX_TIMEOUT_MS)) {
-            result.error = ERR_TIMEOUT;
-            break;
-        }
-
-        int txlvl = readReg(regAddr(REG_TXLVL, channel));
-        if (txlvl <= 0) continue;
-
-        uint8_t chunkSize = getOptimalChunkSize(
-            readReg(regAddr(REG_LSR, channel)),
-            txlvl,
-            length - currentOffset,
-            _stats.currentSuccessiveTransfers > 50
-        );
-
-        for (uint8_t i = 0; i < chunkSize; i++) {
-            if (writeReg(regAddr(REG_THR, channel), buffer[currentOffset + i]) != OK) {
-                result.error = ERR_I2C;
-                break;
-            }
-            result.bytesTransferred++;
-        }
-
-        if (result.error != OK) break;
-        currentOffset += chunkSize;
-
-        // Dynamic delay based on performance
-        if (_stats.currentSuccessiveTransfers > 50) {
-            delayMicroseconds(_timings.INTER_CHUNK_DELAY_US / 2);
-        } else {
-            delayMicroseconds(_timings.INTER_CHUNK_DELAY_US);
-        }
-    }
-
-    result.timeMs = millis() - startTime;
-    result.complete = (result.bytesTransferred == length);
-    _stats.recordTransfer(result.complete, result.bytesTransferred, result.timeMs);
-
-    return result;
-}
-
-SC16IS752::TransferResult SC16IS752::readBufferChunked(uint8_t channel, uint8_t* buffer, size_t length) {
-    TransferResult result;
-    result.bytesTransferred = 0;
-    result.error = OK;
-    result.complete = false;
-    result.timeMs = 0;
-
-    if (!isValidChannel(channel) || !buffer || length == 0 || length > MAX_TRANSFER_SIZE) {
-        result.error = ERR_PARAM;
-        return result;
-    }
-
-    unsigned long startTime = millis();
-    size_t currentOffset = 0;
-
-    while (currentOffset < length) {
-        if (!waitForRxData(channel, RX_TIMEOUT_MS)) {
+    while (bytesRemaining > 0) {
+        // Check for timeout
+        if (millis() - startTime > RX_TIMEOUT_MS) {
             result.error = ERR_TIMEOUT;
             break;
         }
 
         int rxlvl = readReg(regAddr(REG_RXLVL, channel));
-        if (rxlvl <= 0) continue;
+        if (rxlvl <= 0) {
+            delayMicroseconds(_timings.STATUS_CHECK_DELAY_US);
+            continue;
+        }
 
-        uint8_t chunkSize = min((uint8_t)rxlvl, (uint8_t)(length - currentOffset));
-
+        // Read available data
+        uint8_t chunkSize = min((size_t)rxlvl, bytesRemaining);
         for (uint8_t i = 0; i < chunkSize; i++) {
             int value = readReg(regAddr(REG_RHR, channel));
             if (value < 0) {
+                result.timeMs = millis() - startTime;
                 result.error = ERR_I2C;
-                break;
+                _stats.recordTransfer(false, result.bytesTransferred, result.timeMs);
+                return result;
             }
-            buffer[currentOffset + i] = value;
+
+            buffer[currentIndex + i] = value;
             result.bytesTransferred++;
+            bytesRemaining--;
+
+            if (_stats.currentSuccessiveTransfers > 50) {
+                delayMicroseconds(_timings.INTER_BYTE_DELAY_US / 2);
+            } else {
+                delayMicroseconds(_timings.INTER_BYTE_DELAY_US);
+            }
         }
 
-        if (result.error != OK) break;
-        currentOffset += chunkSize;
+        currentIndex += chunkSize;
+        delayMicroseconds(_timings.INTER_CHUNK_DELAY_US);
 
-        // Dynamic delay based on performance
-        if (_stats.currentSuccessiveTransfers > 50) {
-            delayMicroseconds(_timings.INTER_CHUNK_DELAY_US / 2);
-        } else {
-            delayMicroseconds(_timings.INTER_CHUNK_DELAY_US);
+        // Check for errors
+        int lsr = readReg(regAddr(REG_LSR, channel));
+        if (lsr & (LSR_FRAMING_ERROR | LSR_PARITY_ERROR | LSR_OVERRUN_ERROR | LSR_BREAK_INTERRUPT)) {
+            result.error = ERR_FIFO;
+            break;
         }
     }
 
@@ -847,7 +562,175 @@ size_t SC16IS752::readBytes(uint8_t channel, uint8_t* buffer, size_t length) {
 }
 
 //=====================================================================
-// Helper Methods
+// GPIO Implementation
+//=====================================================================
+
+void SC16IS752::pinMode(uint8_t pin, uint8_t mode) {
+    if (!isValidGPIOPin(pin)) return;
+
+    // Configure pin for GPIO operation first
+    uint8_t ioControl = readReg(REG_IOControl);
+    ioControl |= (1 << pin);  // Set pin for GPIO mode
+    writeReg(REG_IOControl, ioControl);
+
+    // Set direction using renamed constants
+    updateGPIORegister(REG_IODir, pin, mode == GPIO_INPUT ? 1 : 0);
+}
+
+void SC16IS752::digitalWrite(uint8_t pin, uint8_t state) {
+    if (!isValidGPIOPin(pin)) return;
+
+    // Only write if pin is configured as output
+    if (!(readGPIORegister(REG_IODir, pin))) {
+        updateGPIORegister(REG_IOState, pin, state ? 1 : 0);
+    }
+}
+
+uint8_t SC16IS752::digitalRead(uint8_t pin) {
+    if (!isValidGPIOPin(pin)) return GPIO_LOW;
+
+    return readGPIORegister(REG_IOState, pin) ? GPIO_HIGH : GPIO_LOW;
+}
+
+void SC16IS752::updateGPIORegister(uint8_t reg, uint8_t pin, uint8_t value) {
+    uint8_t currentValue;
+    if (reg == REG_IODir) {
+        currentValue = _gpioDirection;
+    } else if (reg == REG_IOState) {
+        currentValue = _gpioState;
+    } else {
+        currentValue = readReg(reg);
+    }
+
+    if (value) {
+        currentValue |= (1 << pin);
+    } else {
+        currentValue &= ~(1 << pin);
+    }
+
+    writeReg(reg, currentValue);
+
+    // Update cache
+    if (reg == REG_IODir) {
+        _gpioDirection = currentValue;
+    } else if (reg == REG_IOState) {
+        _gpioState = currentValue;
+    }
+}
+
+uint8_t SC16IS752::readGPIORegister(uint8_t reg, uint8_t pin) {
+    uint8_t value;
+    if (reg == REG_IODir) {
+        value = _gpioDirection;
+    } else if (reg == REG_IOState) {
+        value = _gpioState;
+    } else {
+        value = readReg(reg);
+    }
+
+    return (value & (1 << pin)) ? 1 : 0;
+}
+
+//=====================================================================
+// PWM Implementation
+//=====================================================================
+
+bool SC16IS752::pwmBegin(uint8_t pin, uint32_t frequency, PWMResolution resolution) {
+    if (!isValidGPIOPin(pin)) return false;
+
+    // Configure pin for GPIO operation first
+    pinMode(pin, GPIO_OUTPUT);
+
+    // Initialize PWM state
+    _pwmStates[pin].enabled = true;
+    _pwmStates[pin].frequency = frequency;
+    _pwmStates[pin].resolution = resolution;
+    _pwmStates[pin].dutyCycle = 0;
+
+    // Calculate and set prescaler
+    updatePWMPrescaler(pin);
+
+    // Configure PWM settings
+    updatePWMSettings(pin);
+
+    // Set initial duty cycle to 0
+    pwmWrite(pin, 0);
+
+    return true;
+}
+
+void SC16IS752::pwmWrite(uint8_t pin, uint32_t value) {
+    if (!isValidGPIOPin(pin) || !_pwmStates[pin].enabled) return;
+
+    // Clamp value to resolution
+    uint32_t maxValue = pwmGetMaxValue(pin);
+    value = min(value, maxValue);
+
+    _pwmStates[pin].dutyCycle = value;
+
+    // Calculate register values based on resolution
+    uint32_t regValue = (value * maxValue) >> static_cast<uint8_t>(_pwmStates[pin].resolution);
+
+    // Write duty cycle registers
+    writeReg(REG_PWM_DUTY + (pin * 2), regValue & 0xFF);
+    writeReg(REG_PWM_DUTY + (pin * 2) + 1, (regValue >> 8) & 0xFF);
+}
+
+void SC16IS752::pwmWriteHR(uint8_t pin, uint32_t value) {
+    if (!isValidGPIOPin(pin) || !_pwmStates[pin].enabled) return;
+
+    // Direct write without scaling
+    uint32_t maxValue = pwmGetMaxValue(pin);
+    value = min(value, maxValue);
+
+    _pwmStates[pin].dutyCycle = value;
+
+    // Write duty cycle registers directly
+    writeReg(REG_PWM_DUTY + (pin * 2), value & 0xFF);
+    writeReg(REG_PWM_DUTY + (pin * 2) + 1, (value >> 8) & 0xFF);
+}
+
+void SC16IS752::updatePWMPrescaler(uint8_t pin) {
+    if (!isValidGPIOPin(pin) || !_pwmStates[pin].enabled) return;
+
+    uint32_t prescaler = calculatePrescaler(
+        _pwmStates[pin].frequency,
+        _pwmStates[pin].resolution
+    );
+
+    _pwmStates[pin].prescaler = prescaler;
+
+    // Write prescaler registers
+    writeReg(REG_PWM_PRE + (pin * 2), prescaler & 0xFF);
+    writeReg(REG_PWM_PRE + (pin * 2) + 1, (prescaler >> 8) & 0xFF);
+}
+
+void SC16IS752::pwmEnd(uint8_t pin) {
+    if (!isValidGPIOPin(pin)) return;
+
+    // Disable PWM mode
+    uint8_t pwmCtrl = readReg(REG_PWM_CTRL);
+    pwmCtrl &= ~(1 << pin);  // Disable PWM for this pin
+    writeReg(REG_PWM_CTRL, pwmCtrl);
+
+    // Reset state
+    _pwmStates[pin].enabled = false;
+    _pwmStates[pin].dutyCycle = 0;
+
+    // Return pin to normal GPIO output mode
+    pinMode(pin, GPIO_OUTPUT);
+    digitalWrite(pin, GPIO_LOW);
+}
+
+void SC16IS752::analogWrite(uint8_t pin, uint8_t value) {
+    if (!_pwmStates[pin].enabled) {
+        pwmBegin(pin);
+    }
+    pwmWrite(pin, value);
+}
+
+//=====================================================================
+// Timing and Performance Functions
 //=====================================================================
 
 void SC16IS752::adjustDelaysBasedOnPerformance() {
@@ -894,11 +777,7 @@ bool SC16IS752::waitForTxReady(uint8_t channel, unsigned long timeoutMs) {
         if (isTxEmpty(channel)) {
             return true;
         }
-        if (_stats.currentSuccessiveTransfers > 50) {
-            delayMicroseconds(_timings.STATUS_CHECK_DELAY_US / 2);
-        } else {
-            delayMicroseconds(_timings.STATUS_CHECK_DELAY_US);
-        }
+        delayMicroseconds(_timings.STATUS_CHECK_DELAY_US);
     }
     return false;
 }
@@ -909,92 +788,64 @@ bool SC16IS752::waitForRxData(uint8_t channel, unsigned long timeoutMs) {
         if (isRxAvailable(channel)) {
             return true;
         }
-        if (_stats.currentSuccessiveTransfers > 50) {
-            delayMicroseconds(_timings.STATUS_CHECK_DELAY_US / 2);
-        } else {
-            delayMicroseconds(_timings.STATUS_CHECK_DELAY_US);
-        }
+        delayMicroseconds(_timings.STATUS_CHECK_DELAY_US);
     }
     return false;
 }
 
+unsigned long SC16IS752::calculateByteTransmitTime(uint32_t baudRate) {
+    if (baudRate == 0) return 1000;  // Default to 1ms if invalid baud rate
+
+    // Calculate time for one byte (10 bits: start + 8 data + stop)
+    // Multiply by 2 for safety margin
+    return (20000000UL / baudRate);  // Result in microseconds
+}
+
 //=====================================================================
-// Platform-Specific Methods
+// PWM Helper Functions
 //=====================================================================
 
-#if defined(PLATFORM_ESP32) || defined(PLATFORM_ESP8266)
-bool SC16IS752::initI2C() {
-    if (_pins.sda >= 0 && _pins.scl >= 0) {
-        if (!_wire.begin(_pins.sda, _pins.scl)) {
-            return false;
-        }
+uint32_t SC16IS752::calculatePrescaler(uint32_t targetFreq, PWMResolution resolution) const {
+    uint32_t clockFreq = getClockFrequency();
+    uint32_t steps = 1UL << static_cast<uint8_t>(resolution);
+    
+    // Calculate ideal prescaler value
+    uint32_t prescaler = (clockFreq / (targetFreq * steps)) - 1;
+    
+    // Clamp to 16-bit value
+    return min(prescaler, 65535UL);
+}
+
+uint32_t SC16IS752::getClockFrequency() const {
+    // Return appropriate clock frequency based on clock source
+    if (_pwmStates[0].clockSource == PWMClockSource::INTERNAL) {
+        return 1843200;  // Internal oscillator frequency
     } else {
-        if (!_wire.begin()) {
-            return false;
-        }
+        return 14745600;  // Default crystal frequency
     }
-    _wire.setClock(_i2cFreq);
-    return true;
 }
 
-bool SC16IS752::setPins(int sda, int scl) {
-    if (_initialized) {
-        _wire.end();
+void SC16IS752::updatePWMSettings(uint8_t pin) {
+    if (!isValidGPIOPin(pin) || !_pwmStates[pin].enabled) return;
+    
+    uint8_t ctrlReg = readReg(REG_PWM_CTRL);
+    
+    // Clear resolution bits for this pin (2 bits per pin)
+    uint8_t pinShift = (pin * 2);
+    ctrlReg &= ~(0x03 << pinShift);
+    
+    // Set new resolution
+    uint8_t resValue;
+    switch (_pwmStates[pin].resolution) {
+        case PWMResolution::PWM_8_BIT:  resValue = 0; break;
+        case PWMResolution::PWM_10_BIT: resValue = 1; break;
+        case PWMResolution::PWM_12_BIT: resValue = 2; break;
+        case PWMResolution::PWM_16_BIT: resValue = 3; break;
+        default: resValue = 0;
     }
-    _pins.sda = sda;
-    _pins.scl = scl;
-    return initI2C();
-}
-
-bool SC16IS752::setI2CFrequency(uint32_t frequency) {
-    _i2cFreq = frequency;
-    _wire.setClock(frequency);
-    return true;
-}
-#endif
-
-//=====================================================================
-// Register Access Methods
-//=====================================================================
-
-int SC16IS752::writeReg(uint8_t reg, uint8_t value) {
-    if (!_initialized && reg != regAddr(REG_SPR, CHANNEL_A)) return ERR_PARAM;
-
-    for (uint8_t retry = 0; retry < MAX_RETRIES; retry++) {
-        _wire.beginTransmission(_i2cAddr);
-        if (_wire.write(reg) != 1 || _wire.write(value) != 1) {
-            delayMicroseconds(50);
-            continue;
-        }
-
-        if (_wire.endTransmission() == 0) {
-            return OK;
-        }
-        delayMicroseconds(100);
-    }
-
-    return ERR_I2C;
-}
-
-int SC16IS752::readReg(uint8_t reg) {
-    if (!_initialized && reg != regAddr(REG_SPR, CHANNEL_A)) return ERR_PARAM;
-
-    for (uint8_t retry = 0; retry < MAX_RETRIES; retry++) {
-        _wire.beginTransmission(_i2cAddr);
-        if (_wire.write(reg) != 1 || _wire.endTransmission(false) != 0) {
-            delayMicroseconds(50);
-            continue;
-        }
-
-        if (_wire.requestFrom(_i2cAddr, (uint8_t)1) != 1) {
-            delayMicroseconds(50);
-            continue;
-        }
-
-        return _wire.read();
-    }
-
-    return ERR_I2C;
+    
+    ctrlReg |= (resValue << pinShift);
+    writeReg(REG_PWM_CTRL, ctrlReg);
 }
 
 //=====================================================================
@@ -1004,34 +855,17 @@ int SC16IS752::readReg(uint8_t reg) {
 void SC16IS752::updateTransferStatistics(bool success, size_t bytes, uint32_t timeMs) {
     _stats.recordTransfer(success, bytes, timeMs);
 
-    // Update timing parameters based on performance
     if (_stats.currentSuccessiveTransfers > 100 &&
         _stats.averageRate > TransferTimings::SUSTAINED_RATE_BPS_SMALL * 0.95) {
-        // Performing well, optimize further
-        _timings.INTER_BYTE_DELAY_US = max(40UL, _timings.INTER_BYTE_DELAY_US - 1);
-        _timings.INTER_CHUNK_DELAY_US = max(160UL, _timings.INTER_CHUNK_DELAY_US - 2);
-        _timings.STATUS_CHECK_DELAY_US = max(80UL, _timings.STATUS_CHECK_DELAY_US - 1);
+        // Optimize timings for high performance
+        adjustDelaysBasedOnPerformance();
     } else if (_stats.currentSuccessiveTransfers < 10) {
-        // Having issues, reset to safe values
-        _timings.adjustForPacketSize(bytes);
-        _timings.STATUS_CHECK_DELAY_US = 90;
+        // Reset to conservative timings
+        _timings.adjustForPacketSize(_stats.totalBytes);
     }
 }
 
-//=====================================================================
-// TransferTimings Implementation
-//=====================================================================
-
-void SC16IS752::TransferTimings::adjustForPacketSize(size_t packetSize) {
-    if (packetSize <= SMALL_PACKET_THRESHOLD) {
-        INTER_BYTE_DELAY_US = 45;
-        INTER_CHUNK_DELAY_US = 180;
-    } else {
-        INTER_BYTE_DELAY_US = 55;
-        INTER_CHUNK_DELAY_US = 220;
-    }
-}
-
+// Fix the getTransferStats method implementation
 SC16IS752::TransferStats SC16IS752::getTransferStats() const {
     return _stats;
 }
@@ -1042,71 +876,167 @@ void SC16IS752::resetTransferStats() {
 }
 
 //=====================================================================
-// Validation Methods
+// Validation Functions
 //=====================================================================
-
-bool SC16IS752::verifyRegisterWrite(uint8_t reg, uint8_t value) {
-    if (writeReg(reg, value) != OK) {
-        return false;
-    }
-
-    #if defined(PLATFORM_ESP32) || defined(PLATFORM_ESP8266)
-    delayMicroseconds(200);
-    #else
-    delayMicroseconds(100);
-    #endif
-
-    int readValue = readReg(reg);
-    return (readValue >= 0) && ((uint8_t)readValue == value);
-}
 
 bool SC16IS752::isValidChannel(uint8_t channel) const {
     return channel < MAX_CHANNELS;
 }
 
-uint8_t SC16IS752::regAddr(uint8_t reg, uint8_t channel) const {
-    return (reg << 3) | (channel ? 0x02 : 0x00);
+bool SC16IS752::isValidGPIOPin(uint8_t pin) const {
+    return pin <= GPIO_7;
 }
 
 //=====================================================================
-// TransferStats Implementation
+// Chunked Transfer Operations
 //=====================================================================
 
-SC16IS752::TransferStats::TransferStats() {
-    reset();
-}
+SC16IS752::TransferResult SC16IS752::writeBufferChunked(uint8_t channel, const uint8_t* buffer, size_t length) {
+    TransferResult result;
+    result.bytesTransferred = 0;
+    result.error = OK;
+    result.complete = false;
+    result.timeMs = 0;
 
-void SC16IS752::TransferStats::reset() {
-    totalTransfers = 0;
-    successfulTransfers = 0;
-    totalBytes = 0;
-    totalTimeMs = 0;
-    averageRate = 0;
-    maxSuccessiveTransfers = 0;
-    currentSuccessiveTransfers = 0;
-}
-
-void SC16IS752::TransferStats::updateRate() {
-    if (totalTimeMs > 0) {
-        averageRate = (float)(totalBytes * 1000) / totalTimeMs;
-    } else {
-        averageRate = 0;
+    if (!isValidChannel(channel) || !buffer || length == 0 || length > MAX_TRANSFER_SIZE) {
+        result.error = ERR_PARAM;
+        _stats.recordTransfer(false, 0, 0);
+        return result;
     }
-}
 
-void SC16IS752::TransferStats::recordTransfer(bool success, size_t bytes, uint32_t timeMs) {
-    totalTransfers++;
-    if (success) {
-        successfulTransfers++;
-        totalBytes += bytes;
-        totalTimeMs += timeMs;
-        currentSuccessiveTransfers++;
-        if (currentSuccessiveTransfers > maxSuccessiveTransfers) {
-            maxSuccessiveTransfers = currentSuccessiveTransfers;
+    _timings.adjustForPacketSize(length);
+    unsigned long startTime = millis();
+    size_t currentOffset = 0;
+
+    while (currentOffset < length) {
+        if (!waitForTxReady(channel, TX_TIMEOUT_MS)) {
+            result.error = ERR_TIMEOUT;
+            break;
         }
-    } else {
-        currentSuccessiveTransfers = 0;
+
+        int txlvl = readReg(regAddr(REG_TXLVL, channel));
+        if (txlvl <= 0) continue;
+
+        // Get LSR for optimal chunk size calculation
+        int lsr = readReg(regAddr(REG_LSR, channel));
+        uint8_t chunkSize = getOptimalChunkSize(
+            lsr,
+            txlvl,
+            length - currentOffset,
+            _stats.currentSuccessiveTransfers > 50
+        );
+
+        for (uint8_t i = 0; i < chunkSize; i++) {
+            if (writeReg(regAddr(REG_THR, channel), buffer[currentOffset + i]) != OK) {
+                result.error = ERR_I2C;
+                break;
+            }
+            result.bytesTransferred++;
+        }
+
+        if (result.error != OK) break;
+        currentOffset += chunkSize;
+
+        // Dynamic delay based on performance
+        if (_stats.currentSuccessiveTransfers > 50) {
+            delayMicroseconds(_timings.INTER_CHUNK_DELAY_US / 2);
+        } else {
+            delayMicroseconds(_timings.INTER_CHUNK_DELAY_US);
+        }
     }
-    updateRate();
+
+    result.timeMs = millis() - startTime;
+    result.complete = (result.bytesTransferred == length);
+    _stats.recordTransfer(result.complete, result.bytesTransferred, result.timeMs);
+
+    return result;
+}
+
+SC16IS752::TransferResult SC16IS752::readBufferChunked(uint8_t channel, uint8_t* buffer, size_t length) {
+    TransferResult result;
+    result.bytesTransferred = 0;
+    result.error = OK;
+    result.complete = false;
+    result.timeMs = 0;
+
+    if (!isValidChannel(channel) || !buffer || length == 0 || length > MAX_TRANSFER_SIZE) {
+        result.error = ERR_PARAM;
+        _stats.recordTransfer(false, 0, 0);
+        return result;
+    }
+
+    unsigned long startTime = millis();
+    size_t currentOffset = 0;
+
+    while (currentOffset < length) {
+        if (!waitForRxData(channel, RX_TIMEOUT_MS)) {
+            result.error = ERR_TIMEOUT;
+            break;
+        }
+
+        int rxlvl = readReg(regAddr(REG_RXLVL, channel));
+        if (rxlvl <= 0) continue;
+
+        uint8_t chunkSize = min((uint8_t)rxlvl, (uint8_t)(length - currentOffset));
+
+        // Read the chunk
+        for (uint8_t i = 0; i < chunkSize; i++) {
+            int value = readReg(regAddr(REG_RHR, channel));
+            if (value < 0) {
+                result.error = ERR_I2C;
+                break;
+            }
+            buffer[currentOffset + i] = value;
+            result.bytesTransferred++;
+
+            // Dynamic delay based on performance
+            if (_stats.currentSuccessiveTransfers > 50) {
+                delayMicroseconds(_timings.INTER_BYTE_DELAY_US / 2);
+            } else {
+                delayMicroseconds(_timings.INTER_BYTE_DELAY_US);
+            }
+        }
+
+        if (result.error != OK) break;
+        currentOffset += chunkSize;
+
+        // Dynamic delay between chunks
+        if (_stats.currentSuccessiveTransfers > 50) {
+            delayMicroseconds(_timings.INTER_CHUNK_DELAY_US / 2);
+        } else {
+            delayMicroseconds(_timings.INTER_CHUNK_DELAY_US);
+        }
+
+        // Check for errors
+        int lsr = readReg(regAddr(REG_LSR, channel));
+        if (lsr & (LSR_FRAMING_ERROR | LSR_PARITY_ERROR | LSR_OVERRUN_ERROR | LSR_BREAK_INTERRUPT)) {
+            result.error = ERR_FIFO;
+            break;
+        }
+    }
+
+    result.timeMs = millis() - startTime;
+    result.complete = (result.bytesTransferred == length);
+    _stats.recordTransfer(result.complete, result.bytesTransferred, result.timeMs);
+
+    return result;
+}
+
+//=====================================================================
+// TransferTimings Implementation
+//=====================================================================
+
+void SC16IS752::TransferTimings::adjustForPacketSize(size_t packetSize) {
+    if (packetSize <= SMALL_PACKET_THRESHOLD) {
+        // Optimized timings for small packets
+        INTER_BYTE_DELAY_US = 45;
+        INTER_CHUNK_DELAY_US = 180;
+        STATUS_CHECK_DELAY_US = 90;
+    } else {
+        // Conservative timings for larger packets
+        INTER_BYTE_DELAY_US = 55;
+        INTER_CHUNK_DELAY_US = 220;
+        STATUS_CHECK_DELAY_US = 110;
+    }
 }
 
