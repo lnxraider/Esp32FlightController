@@ -1,0 +1,9 @@
+To use this driver in PX4:
+
+Place files in PX4 driver directory:
+
+src/drivers/uart/sc16is752/
+
+The driver can be started from the shell:
+
+sc16is752 start -X

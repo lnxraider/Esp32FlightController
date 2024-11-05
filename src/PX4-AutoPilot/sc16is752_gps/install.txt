@@ -1,0 +1,41 @@
+To use this in PX4:
+
+Create Directory Structure:
+
+cd PX4-Autopilot/src/drivers/gps
+mkdir sc16is752
+cp CMakeLists.txt sc16is752/
+cp sc16is752.cpp sc16is752/
+cp sc16is752.hpp sc16is752/
+cp sc16is752_gps.cpp sc16is752/
+cp sc16is752_gps.hpp sc16is752/
+
+Update PX4 Configuration:
+
+
+Add to board configuration if needed
+Enable in airframe configuration
+Configure through parameters
+
+
+Build Integration:
+
+make px4_fmu-v5_default # or your board target
+
+##############################################
+##############################################
+# Start GPS driver with defaults
+sc16is752_gps start
+
+# Start with specific protocol
+sc16is752_gps start -p 1
+
+# Print detailed status
+sc16is752_gps status
+
+# Dump configuration
+sc16is752_gps dump
+
+# Stop driver
+sc16is752_gps stop
+
